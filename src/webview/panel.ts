@@ -1,59 +1,183 @@
 import * as vscode from 'vscode';
-import type { Core } from '../core/bootstrap';
+import type { Orchestrator } from '../core/orchestrator';
+import type { CacheMetricsSnapshot } from '../core/cache/metrics';
+import type { Message, Session } from '../core/session/session';
+import { renderPanelHtml } from './ui/panelHtml';
+
+/** 面板列表摘要 */
+export interface SessionSummary {
+  id: string;
+  title: string;
+  engineId: string;
+  updatedAt: number;
+}
+
+export interface EngineSummary {
+  engineId: string;
+  label: string;
+}
+
+/** webview → extension（docs/04 第 4 节） */
+export type UiRequest =
+  | { type: 'init' }
+  | { type: 'createSession'; title?: string }
+  | { type: 'selectSession'; sessionId: string }
+  | { type: 'deleteSession'; sessionId: string }
+  | { type: 'selectEngine'; engineId: string; sessionId: string }
+  | { type: 'send'; sessionId?: string; text: string; engineId?: string };
+
+/** extension → webview */
+export type UiState =
+  | { type: 'sessions'; sessions: SessionSummary[]; currentSessionId?: string }
+  | { type: 'engines'; engines: EngineSummary[]; currentEngineId?: string }
+  | { type: 'metrics'; metrics: CacheMetricsSnapshot }
+  | { type: 'messages'; sessionId: string; messages: Message[] }
+  | { type: 'message'; message: Message }
+  | { type: 'notice'; text: string }
+  | { type: 'error'; text: string };
 
 /**
- * 侧边栏 WebviewViewProvider。
- *
- * 本里程碑只渲染空面板占位页；会话列表 / 模型切换 / 缓存状态条在 P1 接入
- * （见 docs/04-VSCode插件面板.md）。
+ * 侧边栏面板 Provider（docs/04）。
+ * 后端持有最新状态，前端被动渲染（状态单向流）。
  */
 export class PanelProvider implements vscode.WebviewViewProvider {
-  constructor(
-    private readonly context: vscode.ExtensionContext,
-    private readonly core: Core,
-  ) {}
+  private currentSessionId: string | undefined;
+
+  constructor(private readonly orchestrator: Orchestrator) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
-    webviewView.webview.options = { enableScripts: false };
-    webviewView.webview.html = this.renderHtml();
+    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.html = renderPanelHtml();
+    webviewView.webview.onDidReceiveMessage((msg) => {
+      void this.handleMessage(webviewView, msg as UiRequest);
+    });
   }
 
-  private renderHtml(): string {
-    return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  body {
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    padding: 12px;
+  private post(view: vscode.WebviewView, state: UiState): void {
+    void view.webview.postMessage(state);
   }
-  h1 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
-  .muted { color: var(--vscode-descriptionForeground); font-size: 12px; line-height: 1.6; }
-  .badge {
-    display: inline-block;
-    margin-top: 12px;
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 11px;
-    background: var(--vscode-badge-background);
-    color: var(--vscode-badge-foreground);
+
+  private async handleMessage(view: vscode.WebviewView, msg: UiRequest): Promise<void> {
+    const orch = this.orchestrator;
+    try {
+      switch (msg.type) {
+        case 'init': {
+          this.post(view, {
+            type: 'engines',
+            engines: orch.engines(),
+            currentEngineId: orch.engines()[0]?.engineId,
+          });
+          this.post(view, {
+            type: 'sessions',
+            sessions: toSummaries(orch.listSessions()),
+            currentSessionId: this.currentSessionId,
+          });
+          this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });
+          if (this.currentSessionId) {
+            this.post(view, {
+              type: 'messages',
+              sessionId: this.currentSessionId,
+              messages: orch.getSession(this.currentSessionId)?.messages ?? [],
+            });
+          }
+          break;
+        }
+        case 'createSession': {
+          const session = await orch.newSession();
+          this.currentSessionId = session.id;
+          this.post(view, {
+            type: 'sessions',
+            sessions: toSummaries(orch.listSessions()),
+            currentSessionId: session.id,
+          });
+          this.post(view, { type: 'messages', sessionId: session.id, messages: [] });
+          break;
+        }
+        case 'selectSession': {
+          this.currentSessionId = msg.sessionId;
+          const session = orch.getSession(msg.sessionId);
+          this.post(view, {
+            type: 'messages',
+            sessionId: msg.sessionId,
+            messages: session?.messages ?? [],
+          });
+          if (session) {
+            this.post(view, {
+              type: 'engines',
+              engines: orch.engines(),
+              currentEngineId: session.engineId,
+            });
+          }
+          break;
+        }
+        case 'deleteSession': {
+          orch.deleteSession(msg.sessionId);
+          if (this.currentSessionId === msg.sessionId) {
+            this.currentSessionId = undefined;
+          }
+          this.post(view, {
+            type: 'sessions',
+            sessions: toSummaries(orch.listSessions()),
+            currentSessionId: this.currentSessionId,
+          });
+          this.post(view, { type: 'messages', sessionId: msg.sessionId, messages: [] });
+          break;
+        }
+        case 'selectEngine': {
+          orch.switchEngine(msg.sessionId, msg.engineId);
+          this.post(view, {
+            type: 'engines',
+            engines: orch.engines(),
+            currentEngineId: msg.engineId,
+          });
+          this.post(view, { type: 'notice', text: '正在目标引擎重建缓存…' });
+          break;
+        }
+        case 'send': {
+          let sessionId = msg.sessionId;
+          if (!sessionId) {
+            // 面板未选会话时自动新建
+            const session = await orch.newSession(msg.engineId);
+            sessionId = session.id;
+            this.currentSessionId = session.id;
+            this.post(view, {
+              type: 'sessions',
+              sessions: toSummaries(orch.listSessions()),
+              currentSessionId: session.id,
+            });
+          }
+          const outcome = await orch.send(sessionId, msg.text, msg.engineId);
+          this.post(view, { type: 'message', message: outcome.userMessage });
+          this.post(view, { type: 'message', message: outcome.assistantMessage });
+          this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });
+          this.post(view, {
+            type: 'engines',
+            engines: orch.engines(),
+            currentEngineId: outcome.decision.engineId,
+          });
+          // 首条消息可能生成标题，刷新列表
+          this.post(view, {
+            type: 'sessions',
+            sessions: toSummaries(orch.listSessions()),
+            currentSessionId: sessionId,
+          });
+          break;
+        }
+      }
+    } catch (err) {
+      this.post(view, {
+        type: 'error',
+        text: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
-</style>
-</head>
-<body>
-  <h1>ContextFlow</h1>
-  <div class="muted">
-    统一编排多家 AI 编程引擎（DeepSeek / Claude / Codex），
-    并在引擎之上加一层前缀缓存，让重复上下文不再重复计费。
-  </div>
-  <div class="badge">骨架 v1.0.1 · 缓存层已就绪</div>
-  <div class="muted" style="margin-top:8px">
-    会话列表 / 模型切换 / 缓存状态条将在 P1 里程碑呈现。
-  </div>
-</body>
-</html>`;
-  }
+}
+
+function toSummaries(sessions: Session[]): SessionSummary[] {
+  return sessions.map((s) => ({
+    id: s.id,
+    title: s.title,
+    engineId: s.engineId,
+    updatedAt: s.updatedAt,
+  }));
 }

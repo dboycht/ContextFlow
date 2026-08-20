@@ -8,6 +8,7 @@ import { DeepSeekAdapter } from './adapters/deepseek';
 import { DshJsonRpcTransport } from './adapters/dshTransport';
 import { SessionStore } from './session/sessionStore';
 import { Router } from './session/router';
+import { Orchestrator } from './orchestrator';
 import { ConfigStore } from './config/configStore';
 
 /**
@@ -22,6 +23,7 @@ export interface Core {
   registry: AdapterRegistry;
   sessionStore: SessionStore;
   router: Router;
+  orchestrator: Orchestrator;
 }
 
 export function createCore(storagePath: string): Core {
@@ -30,10 +32,11 @@ export function createCore(storagePath: string): Core {
 
   const cacheStore = new CacheStore(dbPath);
   const metrics = new CacheMetrics();
+  // 命中统计统一由 orchestrator 按 adapter 回传的 usage 记录（DeepSeek 自动缓存无 cache_id，
+  // prefixCache 本地命中判定对它恒为 miss；Claude 显式缓存路径可单独注入 metrics）
   const prefixCache = new PrefixCache(cacheStore, {
     minTokens: 1024,
     ttlMs: 60 * 60 * 1000,
-    metrics,
   });
 
   const config = new ConfigStore();
@@ -59,5 +62,24 @@ export function createCore(storagePath: string): Core {
   const sessionStore = new SessionStore(dbPath);
   const router = new Router(registry, config);
 
-  return { cacheStore, metrics, prefixCache, config, registry, sessionStore, router };
+  // 关键闭环编排器（docs/03 §6）
+  const orchestrator = new Orchestrator({
+    router,
+    sessionStore,
+    prefixCache,
+    cacheStore,
+    registry,
+    metrics,
+  });
+
+  return {
+    cacheStore,
+    metrics,
+    prefixCache,
+    config,
+    registry,
+    sessionStore,
+    router,
+    orchestrator,
+  };
 }

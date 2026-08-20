@@ -1,0 +1,162 @@
+import type { Router, RouteDecision } from './session/router';
+import type { SessionStore } from './session/sessionStore';
+import type { Session, Message } from './session/session';
+import { createAssistantMessage, createUserMessage } from './session/session';
+import type { PrefixCache } from './cache/prefixCache';
+import type { CacheStore } from './cache/cacheStore';
+import type { CacheMetrics } from './cache/metrics';
+import type { AdapterRegistry } from './adapters/registry';
+import type { ContextRef } from './cache/types';
+
+/**
+ * 关键闭环编排器（docs/03 §6）：
+ * router.decide → sessionStore.historyPrefix → prefixCache.prepare → adapter.send → appendMessage
+ * 只有「已确认」的轮次（发送并回写后）才进历史前缀。
+ */
+export interface OrchestratorDeps {
+  router: Router;
+  sessionStore: SessionStore;
+  prefixCache: PrefixCache;
+  cacheStore: CacheStore;
+  registry: AdapterRegistry;
+  metrics: CacheMetrics;
+}
+
+export interface SendOutcome {
+  userMessage: Message;
+  assistantMessage: Message;
+  decision: RouteDecision;
+  contextRef: ContextRef;
+}
+
+/** 默认系统提示（P1 起可由设置/会话 meta 覆写） */
+const DEFAULT_SYSTEM_PROMPT =
+  'You are ContextFlow, an AI coding assistant that unifies multiple AI coding engines ' +
+  'with cached context to reduce token costs. Answer concisely.';
+
+export class Orchestrator {
+  private readonly systemPrompt: string;
+
+  constructor(private readonly deps: OrchestratorDeps) {
+    this.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+  }
+
+  /** 新建会话：归属引擎走 router（默认/记忆），亲和性锚点即创建时的引擎 */
+  async newSession(requestedEngineId?: string): Promise<Session> {
+    const decision = await this.deps.router.decide(undefined, requestedEngineId);
+    return this.deps.sessionStore.create('', decision.engineId);
+  }
+
+  /**
+   * 一轮完整提问（docs/03 §6 关键闭环）。
+   * @param sessionId 会话 id
+   * @param text      当前问题（可变部分，不进前缀）
+   * @param requestedEngineId 面板手动选择（undefined = 走亲和性/默认）
+   */
+  async send(
+    sessionId: string,
+    text: string,
+    requestedEngineId?: string,
+  ): Promise<SendOutcome> {
+    const { sessionStore, router, prefixCache, registry, cacheStore, metrics } = this.deps;
+    const session = sessionStore.get(sessionId);
+    if (!session) {
+      throw new Error(`session not found: ${sessionId}`);
+    }
+
+    // 1. 路由决策（手动 > 亲和 > 默认 > failover）
+    const decision = await router.decide(session, requestedEngineId);
+
+    // 2. 跨引擎迁移：更新亲和性锚点（重建缓存在目标引擎侧自然发生）
+    if (decision.migrated) {
+      sessionStore.setEngine(sessionId, decision.engineId);
+      session.engineId = decision.engineId;
+    }
+
+    // 3. 历史前缀（已确认轮次）+ 缓存 prepare（固定前缀在前、问题在后）
+    const history = sessionStore.historyPrefix(sessionId);
+    const contextRef = await prefixCache.prepare(
+      [this.systemPrompt],
+      history,
+      text,
+      decision.engineId,
+    );
+
+    // 4. 发送到目标引擎
+    const adapter = registry.get(decision.engineId);
+    if (!adapter) {
+      throw new Error(`adapter not found: ${decision.engineId}`);
+    }
+    const prompt = contextRef.prefixText
+      ? `${contextRef.prefixText}\n\n${contextRef.newText}`
+      : contextRef.newText;
+    const result = await adapter.send({ prompt, contextRef, sessionId });
+
+    // 5. cacheId 回填（显式缓存厂商如 Anthropic；DeepSeek 自动缓存无 cache_id）
+    if (result.cacheId && contextRef.cacheEntry) {
+      cacheStore.attachCacheId(
+        contextRef.cacheEntry.id,
+        result.cacheId,
+        result.usage.inputTokens,
+      );
+    }
+
+    // 6. 回写会话历史（回复确认后才 append——未完成/中断的内容绝不进前缀）
+    const userMessage = createUserMessage(text, decision.engineId);
+    const assistantMessage = createAssistantMessage(
+      result.content,
+      decision.engineId,
+      result.usage,
+    );
+    sessionStore.appendMessage(sessionId, userMessage);
+    sessionStore.appendMessage(sessionId, assistantMessage);
+
+    // 7. 命中指标（跨厂商一致：以 adapter 回传的最终 usage 为准，DeepSeek 自动缓存
+    //    无 cache_id，本地前缀命中判定对它恒为 miss，故不依赖 prefixCache 内部记录）
+    if ((result.usage.cacheHitTokens ?? 0) > 0) {
+      metrics.recordHit(result.usage.cacheHitTokens ?? 0);
+    } else {
+      metrics.recordMiss();
+    }
+    metrics.recordInputTokens(result.usage.inputTokens);
+
+    return { userMessage, assistantMessage, decision, contextRef };
+  }
+
+  /** 用户强制切换引擎：记忆选择 + 更新会话归属（docs/03 §5 强制切换才迁移） */
+  switchEngine(sessionId: string, engineId: string): void {
+    this.deps.router.remember(engineId);
+    this.deps.sessionStore.setEngine(sessionId, engineId);
+  }
+
+  listSessions(): Session[] {
+    return this.deps.sessionStore.list();
+  }
+
+  getSession(sessionId: string): Session | undefined {
+    return this.deps.sessionStore.get(sessionId);
+  }
+
+  deleteSession(sessionId: string): void {
+    this.deps.sessionStore.delete(sessionId);
+  }
+
+  renameSession(sessionId: string, title: string): void {
+    this.deps.sessionStore.rename(sessionId, title);
+  }
+
+  /** 面板引擎下拉数据源 */
+  engines(): Array<{ engineId: string; label: string }> {
+    return this.deps.registry
+      .list()
+      .map((a) => ({ engineId: a.capabilities.engineId, label: a.capabilities.label }));
+  }
+
+  metricsSnapshot() {
+    return this.deps.metrics.snapshot();
+  }
+
+  async healthMap(): Promise<Record<string, boolean>> {
+    return this.deps.registry.healthMap();
+  }
+}
