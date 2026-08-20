@@ -43,7 +43,8 @@
         {
           "type": "webview",
           "id": "contextflow.panel",
-          "name": "ContextFlow"
+          "name": "ContextFlow",
+          "icon": "media/icon.png"
         }
       ]
     },
