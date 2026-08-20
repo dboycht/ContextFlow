@@ -100,9 +100,6 @@
     const box = $('cp-engines');
     box.innerHTML = state.engines.map((e) => {
       const disabled = e.terminal === false;
-      const status = e.terminal === false
-        ? '<span class="muted" style="font-size:11px;margin-left:auto">无终端 CLI</span>'
-        : '<button class="cp-term" data-term="' + escapeHtml(e.engineId) + '" title="在集成终端打开原生 CLI（完整交互）">终端</button>';
       return '<label class="cp-engine' + (e.engineId === state.currentEngineId ? ' active' : '') +
         '" data-id="' + escapeHtml(e.engineId) + '"' +
         (disabled ? ' style="opacity:.5"' : '') + '>' +
@@ -110,12 +107,12 @@
         (disabled ? ' disabled' : '') +
         (e.engineId === state.currentEngineId ? ' checked' : '') + '>' +
         '<span>' + escapeHtml(e.label) + '</span>' +
-        status +
+        (disabled ? '<span class="muted" style="font-size:11px;margin-left:auto">无终端 CLI</span>' : '') +
         '</label>';
     }).join('') || '<div class="muted">未检测到可用引擎</div>';
     renderCreateModelEffort();
     const current = state.engines.find((e) => e.engineId === state.currentEngineId);
-    // 无终端 CLI 的引擎不可创建（对话走内置终端）
+    // 无终端 CLI 的引擎不可创建（对话走面板内嵌终端）
     $('cp-create').disabled = state.busy || state.engines.length === 0 || current?.terminal === false;
   }
 
@@ -407,14 +404,6 @@
   $('new-session').addEventListener('click', () => openCreatePanel());
 
   $('cp-engines').addEventListener('click', (e) => {
-    // 终端按钮：在集成终端打开原生 CLI（不选引擎、不创建会话）
-    const termBtn = e.target.closest('[data-term]');
-    if (termBtn) {
-      e.preventDefault();
-      e.stopPropagation();
-      vscode.postMessage({ type: 'openTerminal', engineId: termBtn.getAttribute('data-term') });
-      return;
-    }
     const input = e.target.closest('input[type=radio]');
     if (input) pickCreateEngine(input.value);
   });

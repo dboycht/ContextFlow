@@ -31,7 +31,6 @@ export type UiRequest =
   | { type: 'selectSession'; sessionId: string }
   | { type: 'deleteSession'; sessionId: string }
   | { type: 'selectEngine'; engineId: string; sessionId: string }
-  | { type: 'openTerminal'; engineId: string }
   | { type: 'ptyInput'; sessionId: string; data: string }
   | { type: 'ptyResize'; sessionId: string; cols: number; rows: number }
   | { type: 'send'; sessionId?: string; text: string; engineId?: string; model?: string; effort?: string };
@@ -108,21 +107,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * 在集成终端中打开对应 Harness 的原生 CLI（如 claude / opencode）。
-   * 终端是 shell，能解析 npm 的 .cmd 包装；原生 TUI 提供完整交互。
+   * 侧边栏面板 Provider（docs/04）。
+   * 后端持有最新状态，前端被动渲染（状态单向流）。
+   * 终端型会话：PTY（node-pty）spawn 原生 CLI，输出/输入经 webview xterm.js 桥接。
+   * ⚠️ 不提供 VS Code 集成终端（createTerminal）入口——对话一律在面板内嵌终端。
    */
-  private openTerminal(engineId: string): void {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const label =
-      engineId === 'claude' ? 'Claude Code'
-      : engineId === 'opencode' ? 'opencode'
-      : engineId === 'openai' ? 'Codex'
-      : engineId;
-    const terminal = vscode.window.createTerminal({ name: `ContextFlow: ${label}`, cwd });
-    terminal.show();
-    terminal.sendText(engineId);
-  }
-
   private post(view: vscode.WebviewView, state: UiState): void {
     void view.webview.postMessage(state);
   }
@@ -217,10 +206,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             currentEngineId: msg.engineId,
           });
           this.post(view, { type: 'notice', text: '正在目标引擎重建缓存…' });
-          break;
-        }
-        case 'openTerminal': {
-          this.openTerminal(msg.engineId);
           break;
         }
         case 'ptyInput': {
