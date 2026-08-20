@@ -26,6 +26,20 @@ export interface Core {
   orchestrator: Orchestrator;
 }
 
+/** 从 envFile（如 Harness 根 .env）读取 DEEPSEEK_API_KEY（不打印值） */
+function readApiKeyFromEnvFile(envFile: string | undefined): string | undefined {
+  if (!envFile || !fs.existsSync(envFile)) {
+    return undefined;
+  }
+  for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*DEEPSEEK_API_KEY\s*=\s*(.*)\s*$/);
+    if (m && m[1]) {
+      return m[1];
+    }
+  }
+  return undefined;
+}
+
 export function createCore(storagePath: string): Core {
   fs.mkdirSync(storagePath, { recursive: true });
   const dbPath = path.join(storagePath, 'contextflow.db');
@@ -40,10 +54,14 @@ export function createCore(storagePath: string): Core {
   });
 
   const config = new ConfigStore();
+  // 本机运行时配置覆盖（data/config.json，gitignore 不随源码分发；产品未来走设置 UI）
+  config.loadFromFile(path.join(process.cwd(), 'data', 'config.json'));
   const registry = new AdapterRegistry();
 
   // DeepSeekAdapter：驱动 DeepSeek Harness（SDK JSON-RPC，docs/02 §4.1）
   const dsh = config.getDeepSeekConfig();
+  const apiKey =
+    readApiKeyFromEnvFile(dsh.envFile) ?? process.env[dsh.apiKeyEnv] ?? '';
   registry.register(
     new DeepSeekAdapter(
       new DshJsonRpcTransport({
@@ -51,7 +69,7 @@ export function createCore(storagePath: string): Core {
         args: dsh.args,
         cwd: dsh.cwd,
         env: {
-          DEEPSEEK_API_KEY: process.env[dsh.apiKeyEnv] ?? '',
+          DEEPSEEK_API_KEY: apiKey,
         },
       }),
       dsh,

@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+
 /**
  * 配置与密钥（docs/00 §8）：API key 只存 VS Code SecretStorage（extension 层），
  * core 层保持纯 Node——真实 key 由 extension 注入 process.env 或 ConfigStore 覆写。
@@ -19,6 +21,8 @@ export interface DeepSeekConfig {
   args: string[];
   /** 工作目录（Harness 仓库/安装目录；空则继承扩展宿主 cwd） */
   cwd?: string;
+  /** dsh 环境变量文件（如 Harness 根 .env，用于读取 DEEPSEEK_API_KEY；不打印值） */
+  envFile?: string;
   /** 初始 provider 路由 */
   provider: string;
   /** 初始模型 */
@@ -64,6 +68,28 @@ export class ConfigStore {
       ...partial,
       pricing: partial.pricing ? { ...partial.pricing } : this.deepseek.pricing,
     };
+  }
+
+  /**
+   * 从 JSON 文件加载覆盖（存在才读；data/config.json 为本机运行时配置，不进 git）。
+   * 结构：{ deepseek?: Partial<DeepSeekConfig>, defaultModel?: string }
+   */
+  loadFromFile(filePath: string): void {
+    if (!fs.existsSync(filePath)) {
+      return;
+    }
+    let raw: { deepseek?: Partial<DeepSeekConfig>; defaultModel?: string };
+    try {
+      raw = JSON.parse(fs.readFileSync(filePath, 'utf8')) as typeof raw;
+    } catch {
+      return; // 损坏的配置忽略，用默认
+    }
+    if (raw.deepseek) {
+      this.updateDeepSeekConfig(raw.deepseek);
+    }
+    if (typeof raw.defaultModel === 'string') {
+      this.setDefaultModel(raw.defaultModel);
+    }
   }
 
   /** 默认引擎（新建会话无归属时使用；router 的 memory 策略写这里） */
