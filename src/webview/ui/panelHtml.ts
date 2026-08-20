@@ -5,8 +5,10 @@
  */
 
 export interface PanelHtmlOptions {
-  /** webview CSP 源（vscode-webview://...），用于允许 xterm 资源与内联脚本 */
+  /** webview CSP 源（vscode-webview://...），用于允许 xterm 资源 */
   cspSource: string;
+  /** CSP nonce（内联脚本用，VS Code 官方方案） */
+  nonce: string;
   /** xterm.js 的 webview 资源 URI */
   xtermJsUri: string;
   xtermCssUri: string;
@@ -18,7 +20,7 @@ export function renderPanelHtml(options: PanelHtmlOptions): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${options.cspSource} data:; style-src ${options.cspSource} 'unsafe-inline'; font-src ${options.cspSource}; script-src ${options.cspSource} 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${options.cspSource} data:; style-src ${options.cspSource} 'unsafe-inline'; font-src ${options.cspSource}; script-src 'nonce-${options.nonce}' ${options.cspSource};">
 <link rel="stylesheet" href="${options.xtermCssUri}">
 <style>
   :root {
@@ -158,8 +160,8 @@ export function renderPanelHtml(options: PanelHtmlOptions): string {
       <div class="statusbar" id="statusbar"></div>
     </section>
   </div>
-<script src="${options.xtermJsUri}"></script>
-<script>
+<script src="${options.xtermJsUri}" nonce="${options.nonce}"></script>
+<script nonce="${options.nonce}">
 (function () {
   const vscode = acquireVsCodeApi();
   const state = {

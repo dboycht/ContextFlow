@@ -91,8 +91,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.currentView = webviewView;
     webviewView.webview.options = { enableScripts: true };
+    const nonce = getNonce();
     const htmlOptions: PanelHtmlOptions = {
       cspSource: webviewView.webview.cspSource,
+      nonce,
       xtermJsUri: webviewView.webview.asWebviewUri(
         vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm', 'xterm.js'),
       ).toString(),
@@ -336,4 +338,14 @@ function toSummaries(sessions: Session[]): SessionSummary[] {
     engineId: s.engineId,
     updatedAt: s.updatedAt,
   }));
+}
+
+/** 生成 webview CSP nonce（VS Code 官方推荐的内联脚本方案） */
+function getNonce(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let text = '';
+  for (let i = 0; i < 32; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return text;
 }
