@@ -5,7 +5,7 @@
   "version": "1.0.1",
   "publisher": "contextflow",
   "license": "MIT",
-  "icon": "media/icon.svg",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/dboycht/ContextFlow.git"
@@ -28,16 +28,13 @@
     "cost"
   ],
   "main": "./out/src/extension.js",
-  "activationEvents": [
-    "onView:contextflow.panel"
-  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
           "id": "contextflow",
           "title": "ContextFlow",
-          "icon": "media/icon.svg"
+          "icon": "media/icon.png"
         }
       ]
     },
