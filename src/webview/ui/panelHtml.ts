@@ -66,8 +66,13 @@ export function renderPanelHtml(): string {
          border-radius: 4px; padding: 1px 8px; cursor: pointer; font-size: 12px; }
   /* ③ 缓存状态条 */
   .statusbar { border-top: 1px solid var(--border); padding: 5px 12px; font-size: 11px;
-               color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+               color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap;
+               align-items: center; min-height: 26px; }
   .statusbar .hit-ok { color: #4caf50; font-weight: 600; }
+  .statusbar .busy { display: inline-flex; align-items: center; gap: 6px;
+                     color: var(--vscode-charts-yellow); font-weight: 500; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+  .statusbar .busy .spinner { animation: pulse 1.1s ease-in-out infinite; font-size: 13px; }
   /* 通用 */
   .notice { padding: 6px 12px; font-size: 12px; color: var(--vscode-charts-yellow); }
   .error { padding: 6px 12px; font-size: 12px; color: var(--vscode-errorForeground); }
@@ -101,6 +106,7 @@ export function renderPanelHtml(): string {
     sessions: [], currentSessionId: undefined,
     engines: [], currentEngineId: undefined,
     messages: [], metrics: null,
+    busy: false, busyHint: '',
   };
 
   const $ = (id) => document.getElementById(id);
@@ -150,6 +156,11 @@ export function renderPanelHtml(): string {
 
   function renderStatus() {
     const bar = $('statusbar');
+    if (state.busy) {
+      bar.innerHTML = '<span class="busy"><span class="spinner">⏳</span>' +
+        escapeHtml(state.busyHint || '处理中…') + '</span>';
+      return;
+    }
     const m = state.metrics;
     if (!m || m.totalRequests === 0) {
       bar.innerHTML = '<span>等待首次提问（前缀稳定后自动命中缓存）</span>';
@@ -160,6 +171,13 @@ export function renderPanelHtml(): string {
       ? '<span class="hit-ok">✓ 已复用 ~' + m.prefixTokensSaved.toLocaleString() + ' token</span>' : '';
     bar.innerHTML =
       '<span>请求 ' + m.totalRequests + ' · 命中率 ' + rate + '</span>' + saved;
+  }
+
+  /** 请求期间禁用发送区，防止重复发送（transport 单槽） */
+  function updateComposer() {
+    sendBtn.disabled = state.busy || input.value.trim().length === 0;
+    input.disabled = state.busy;
+    $('engine-select').disabled = state.busy || state.engines.length === 0;
   }
 
   function showNotice(text) {
@@ -187,6 +205,7 @@ export function renderPanelHtml(): string {
         state.engines = msg.engines;
         state.currentEngineId = msg.currentEngineId ?? state.currentEngineId;
         renderEngines();
+        updateComposer();
         break;
       case 'metrics':
         state.metrics = msg.metrics;
@@ -199,6 +218,12 @@ export function renderPanelHtml(): string {
       case 'message':
         state.messages = state.messages.concat([msg.message]);
         renderMessages();
+        break;
+      case 'busy':
+        state.busy = msg.busy;
+        state.busyHint = msg.hint ?? '';
+        renderStatus();
+        updateComposer();
         break;
       case 'notice': showNotice(msg.text); break;
       case 'error': showError(msg.text); break;
@@ -230,7 +255,7 @@ export function renderPanelHtml(): string {
 
   const input = $('input');
   const sendBtn = $('send');
-  input.addEventListener('input', () => { sendBtn.disabled = input.value.trim().length === 0; });
+  input.addEventListener('input', () => updateComposer());
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -240,12 +265,17 @@ export function renderPanelHtml(): string {
   sendBtn.addEventListener('click', send);
 
   function send() {
+    if (state.busy) return;
     const text = input.value.trim();
     if (!text) return;
     const sessionId = state.currentSessionId;
     const engineId = $('engine-select').value;
+    // 本地乐观置忙：状态条立即显示处理中，等待后端 busy 确认
+    state.busy = true;
+    state.busyHint = '正在连接引擎并发送…';
     input.value = '';
-    sendBtn.disabled = true;
+    updateComposer();
+    renderStatus();
     vscode.postMessage({ type: 'send', sessionId, text, engineId });
   }
 

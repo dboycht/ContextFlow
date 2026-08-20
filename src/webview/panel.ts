@@ -33,6 +33,7 @@ export type UiState =
   | { type: 'metrics'; metrics: CacheMetricsSnapshot }
   | { type: 'messages'; sessionId: string; messages: Message[] }
   | { type: 'message'; message: Message }
+  | { type: 'busy'; busy: boolean; hint?: string }
   | { type: 'notice'; text: string }
   | { type: 'error'; text: string };
 
@@ -134,33 +135,39 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'send': {
-          let sessionId = msg.sessionId;
-          if (!sessionId) {
-            // 面板未选会话时自动新建
-            const session = await orch.newSession(msg.engineId);
-            sessionId = session.id;
-            this.currentSessionId = session.id;
+          // 发送进度提示（首次会连接/启动 Harness 进程，可能数秒~数十秒）
+          this.post(view, { type: 'busy', busy: true, hint: '正在连接引擎并发送…' });
+          try {
+            let sessionId = msg.sessionId;
+            if (!sessionId) {
+              // 面板未选会话时自动新建
+              const session = await orch.newSession(msg.engineId);
+              sessionId = session.id;
+              this.currentSessionId = session.id;
+              this.post(view, {
+                type: 'sessions',
+                sessions: toSummaries(orch.listSessions()),
+                currentSessionId: session.id,
+              });
+            }
+            const outcome = await orch.send(sessionId, msg.text, msg.engineId);
+            this.post(view, { type: 'message', message: outcome.userMessage });
+            this.post(view, { type: 'message', message: outcome.assistantMessage });
+            this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });
+            this.post(view, {
+              type: 'engines',
+              engines: orch.engines(),
+              currentEngineId: outcome.decision.engineId,
+            });
+            // 首条消息可能生成标题，刷新列表
             this.post(view, {
               type: 'sessions',
               sessions: toSummaries(orch.listSessions()),
-              currentSessionId: session.id,
+              currentSessionId: sessionId,
             });
+          } finally {
+            this.post(view, { type: 'busy', busy: false });
           }
-          const outcome = await orch.send(sessionId, msg.text, msg.engineId);
-          this.post(view, { type: 'message', message: outcome.userMessage });
-          this.post(view, { type: 'message', message: outcome.assistantMessage });
-          this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });
-          this.post(view, {
-            type: 'engines',
-            engines: orch.engines(),
-            currentEngineId: outcome.decision.engineId,
-          });
-          // 首条消息可能生成标题，刷新列表
-          this.post(view, {
-            type: 'sessions',
-            sessions: toSummaries(orch.listSessions()),
-            currentSessionId: sessionId,
-          });
           break;
         }
       }
