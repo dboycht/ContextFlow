@@ -6,6 +6,8 @@ import { PrefixCache } from './cache/prefixCache';
 import { AdapterRegistry } from './adapters/registry';
 import { DeepSeekAdapter } from './adapters/deepseek';
 import { DshJsonRpcTransport } from './adapters/dshTransport';
+import { ClaudeCodeAdapter } from './adapters/claude';
+import { OpencodeAdapter } from './adapters/opencode';
 import { SessionStore } from './session/sessionStore';
 import { Router } from './session/router';
 import { Orchestrator } from './orchestrator';
@@ -97,6 +99,17 @@ export function createCore(storagePath: string, configDirs: string[] = []): Core
       dsh,
     ),
   );
+
+  // CLI 类引擎（Claude Code / opencode）：成熟终端 Harness，无状态 headless 调用，
+  // 会话记忆由 ContextFlow sessionStore 管理；诊断打到扩展宿主控制台
+  const cliStderrSink = (chunk: string): void => {
+    const line = chunk.trim();
+    if (line) {
+      console.error('[ContextFlow][cli]', line.slice(0, 500));
+    }
+  };
+  registry.register(new ClaudeCodeAdapter({ stderrSink: cliStderrSink }));
+  registry.register(new OpencodeAdapter({ stderrSink: cliStderrSink }));
 
   // 会话层：跨模型统一会话 + 路由（docs/03）
   const sessionStore = new SessionStore(dbPath);

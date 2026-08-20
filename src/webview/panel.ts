@@ -15,6 +15,8 @@ export interface SessionSummary {
 export interface EngineSummary {
   engineId: string;
   label: string;
+  /** 可用模型（面板模型下拉数据源） */
+  models?: string[];
 }
 
 /** webview → extension（docs/04 第 4 节） */
@@ -24,7 +26,7 @@ export type UiRequest =
   | { type: 'selectSession'; sessionId: string }
   | { type: 'deleteSession'; sessionId: string }
   | { type: 'selectEngine'; engineId: string; sessionId: string }
-  | { type: 'send'; sessionId?: string; text: string; engineId?: string };
+  | { type: 'send'; sessionId?: string; text: string; engineId?: string; model?: string };
 
 /** extension → webview */
 export type UiState =
@@ -150,7 +152,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
                 currentSessionId: session.id,
               });
             }
-            const outcome = await orch.send(sessionId, msg.text, msg.engineId);
+            const outcome = await orch.send(sessionId, msg.text, msg.engineId, msg.model);
             this.post(view, { type: 'message', message: outcome.userMessage });
             this.post(view, { type: 'message', message: outcome.assistantMessage });
             this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });

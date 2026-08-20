@@ -52,11 +52,13 @@ export class Orchestrator {
    * @param sessionId 会话 id
    * @param text      当前问题（可变部分，不进前缀）
    * @param requestedEngineId 面板手动选择（undefined = 走亲和性/默认）
+   * @param requestedModel    面板选择的模型（undefined = 引擎默认；'default' 同义）
    */
   async send(
     sessionId: string,
     text: string,
     requestedEngineId?: string,
+    requestedModel?: string,
   ): Promise<SendOutcome> {
     const { sessionStore, router, prefixCache, registry, cacheStore, metrics } = this.deps;
     const session = sessionStore.get(sessionId);
@@ -90,7 +92,12 @@ export class Orchestrator {
     const prompt = contextRef.prefixText
       ? `${contextRef.prefixText}\n\n${contextRef.newText}`
       : contextRef.newText;
-    const result = await adapter.send({ prompt, contextRef, sessionId });
+    const result = await adapter.send({
+      prompt,
+      contextRef,
+      sessionId,
+      options: requestedModel && requestedModel !== 'default' ? { model: requestedModel } : undefined,
+    });
 
     // 5. cacheId 回填（显式缓存厂商如 Anthropic；DeepSeek 自动缓存无 cache_id）
     if (result.cacheId && contextRef.cacheEntry) {
@@ -146,10 +153,14 @@ export class Orchestrator {
   }
 
   /** 面板引擎下拉数据源 */
-  engines(): Array<{ engineId: string; label: string }> {
+  engines(): Array<{ engineId: string; label: string; models?: string[] }> {
     return this.deps.registry
       .list()
-      .map((a) => ({ engineId: a.capabilities.engineId, label: a.capabilities.label }));
+      .map((a) => ({
+        engineId: a.capabilities.engineId,
+        label: a.capabilities.label,
+        models: a.capabilities.models,
+      }));
   }
 
   metricsSnapshot() {

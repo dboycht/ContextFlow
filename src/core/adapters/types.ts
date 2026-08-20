@@ -46,6 +46,8 @@ export interface Capabilities {
   maxContextTokens: number;
   /** 是否支持缓存 */
   supportsCache: boolean;
+  /** 可用模型列表（面板模型下拉数据源；'default' = 用引擎 CLI/配置的默认模型） */
+  models?: string[];
   /** 单价（元/百万 token，参考值，用于成本估算；以各厂商官方定价页为准，可配置覆写） */
   pricing?: {
     input: number;

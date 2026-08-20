@@ -93,6 +93,7 @@ export function renderPanelHtml(): string {
       <div id="error" class="error hidden"></div>
       <div class="composer">
         <select id="engine-select" title="引擎"></select>
+        <select id="model-select" title="模型"></select>
         <textarea id="input" placeholder="输入问题，Enter 发送（Shift+Enter 换行）"></textarea>
         <button id="send" disabled>发送</button>
       </div>
@@ -105,6 +106,7 @@ export function renderPanelHtml(): string {
   const state = {
     sessions: [], currentSessionId: undefined,
     engines: [], currentEngineId: undefined,
+    currentModel: undefined,
     messages: [], metrics: null,
     busy: false, busyHint: '',
   };
@@ -152,6 +154,20 @@ export function renderPanelHtml(): string {
       escapeHtml(e.label) + '</option>'
     ).join('');
     sel.disabled = state.engines.length === 0;
+    renderModels();
+  }
+
+  /** 模型下拉：跟随当前引擎的 models（'default' = 用引擎 CLI/配置默认模型） */
+  function renderModels() {
+    const engine = state.engines.find((e) => e.engineId === state.currentEngineId);
+    const models = engine?.models && engine.models.length > 0 ? engine.models : ['default'];
+    const sel = $('model-select');
+    sel.innerHTML = models.map((m) =>
+      '<option value="' + escapeHtml(m) + '"' +
+      ((state.currentModel ?? 'default') === m ? ' selected' : '') + '>' +
+      escapeHtml(m) + '</option>'
+    ).join('');
+    sel.disabled = state.busy || models.length === 0;
   }
 
   function renderStatus() {
@@ -178,6 +194,7 @@ export function renderPanelHtml(): string {
     sendBtn.disabled = state.busy || input.value.trim().length === 0;
     input.disabled = state.busy;
     $('engine-select').disabled = state.busy || state.engines.length === 0;
+    $('model-select').disabled = state.busy;
   }
 
   function showNotice(text) {
@@ -246,11 +263,18 @@ export function renderPanelHtml(): string {
 
   $('engine-select').addEventListener('change', (e) => {
     const engineId = e.target.value;
+    state.currentEngineId = engineId;
+    state.currentModel = undefined; // 切换引擎后回到该引擎默认模型
+    renderModels();
     if (state.currentSessionId) {
       vscode.postMessage({ type: 'selectEngine', engineId, sessionId: state.currentSessionId });
     } else {
       showNotice('请先选择或新建会话');
     }
+  });
+
+  $('model-select').addEventListener('change', (e) => {
+    state.currentModel = e.target.value === 'default' ? undefined : e.target.value;
   });
 
   const input = $('input');
@@ -270,13 +294,14 @@ export function renderPanelHtml(): string {
     if (!text) return;
     const sessionId = state.currentSessionId;
     const engineId = $('engine-select').value;
+    const model = state.currentModel;
     // 本地乐观置忙：状态条立即显示处理中，等待后端 busy 确认
     state.busy = true;
     state.busyHint = '正在连接引擎并发送…';
     input.value = '';
     updateComposer();
     renderStatus();
-    vscode.postMessage({ type: 'send', sessionId, text, engineId });
+    vscode.postMessage({ type: 'send', sessionId, text, engineId, model });
   }
 
   // 初始化
