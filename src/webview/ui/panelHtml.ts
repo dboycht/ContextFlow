@@ -81,6 +81,10 @@ export function renderPanelHtml(): string {
                       color: var(--vscode-list-activeSelectionForeground); }
   .cp-engine input { accent-color: var(--accent); }
   .cp-engine .cp-status { margin-left: auto; font-size: 11px; opacity: .7; }
+  .cp-engine .cp-term { margin-left: auto; background: transparent; color: var(--accent);
+                        border: 1px solid var(--accent); border-radius: 4px; padding: 2px 8px;
+                        font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .cp-engine .cp-term:hover { background: var(--accent); color: var(--accent-fg); }
   .cp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
   .cp-row select { flex: 1; background: var(--vscode-dropdown-background);
                    color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border);
@@ -238,6 +242,7 @@ export function renderPanelHtml(): string {
       '<input type="radio" name="cp-engine" value="' + escapeHtml(e.engineId) + '"' +
       (e.engineId === state.currentEngineId ? ' checked' : '') + '>' +
       '<span>' + escapeHtml(e.label) + '</span>' +
+      '<button class="cp-term" data-term="' + escapeHtml(e.engineId) + '" title="在集成终端打开原生 CLI（完整交互）">终端</button>' +
       '</label>'
     ).join('') || '<div class="muted">未检测到可用引擎</div>';
     renderCreateModelEffort();
@@ -486,7 +491,15 @@ export function renderPanelHtml(): string {
   // —— 交互 ——
   $('new-session').addEventListener('click', () => openCreatePanel());
 
-  $('cp-engines').addEventListener('change', (e) => {
+  $('cp-engines').addEventListener('click', (e) => {
+    // 终端按钮：在集成终端打开原生 CLI（不选引擎、不创建会话）
+    const termBtn = e.target.closest('[data-term]');
+    if (termBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      vscode.postMessage({ type: 'openTerminal', engineId: termBtn.getAttribute('data-term') });
+      return;
+    }
     const input = e.target.closest('input[type=radio]');
     if (input) pickCreateEngine(input.value);
   });

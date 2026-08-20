@@ -28,6 +28,7 @@ export type UiRequest =
   | { type: 'selectSession'; sessionId: string }
   | { type: 'deleteSession'; sessionId: string }
   | { type: 'selectEngine'; engineId: string; sessionId: string }
+  | { type: 'openTerminal'; engineId: string }
   | { type: 'send'; sessionId?: string; text: string; engineId?: string; model?: string; effort?: string };
 
 /** extension → webview */
@@ -60,6 +61,23 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((msg) => {
       void this.handleMessage(webviewView, msg as UiRequest);
     });
+  }
+
+  /**
+   * 在集成终端中打开对应 Harness 的原生 CLI（如 claude / opencode）。
+   * 终端是 shell，能解析 npm 的 .cmd 包装；原生 TUI 提供完整交互
+   * （逐字流式/思考/工具/权限/模型切换），绕开 CLI 输出流式粒度的限制。
+   */
+  private openTerminal(engineId: string): void {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const label =
+      engineId === 'claude' ? 'Claude Code'
+      : engineId === 'opencode' ? 'opencode'
+      : engineId === 'openai' ? 'Codex'
+      : engineId;
+    const terminal = vscode.window.createTerminal({ name: `ContextFlow: ${label}`, cwd });
+    terminal.show();
+    terminal.sendText(engineId);
   }
 
   private post(view: vscode.WebviewView, state: UiState): void {
@@ -152,6 +170,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             currentEngineId: msg.engineId,
           });
           this.post(view, { type: 'notice', text: '正在目标引擎重建缓存…' });
+          break;
+        }
+        case 'openTerminal': {
+          this.openTerminal(msg.engineId);
           break;
         }
         case 'send': {
