@@ -1,0 +1,96 @@
+{
+  "name": "context-flow",
+  "displayName": "ContextFlow",
+  "description": "One panel, every harness. Cached context, less token cost. Unified orchestration workbench for AI coding agents (DeepSeek Harness / Claude Code / Codex) with cross-session context caching.",
+  "version": "1.0.1",
+  "publisher": "contextflow",
+  "license": "MIT",
+  "icon": "media/icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dboycht/ContextFlow.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "AI"
+  ],
+  "keywords": [
+    "AI",
+    "context",
+    "cache",
+    "deepseek",
+    "claude",
+    "codex",
+    "token",
+    "cost"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onView:contextflow.panel"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "contextflow",
+          "title": "ContextFlow",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "contextflow": [
+        {
+          "type": "webview",
+          "id": "contextflow.panel",
+          "name": "ContextFlow"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "contextflow.newSession",
+        "title": "ContextFlow: 新建会话"
+      }
+    ],
+    "configuration": {
+      "title": "ContextFlow",
+      "properties": {
+        "contextflow.defaultModel": {
+          "type": "string",
+          "default": "deepseek",
+          "enum": [
+            "deepseek",
+            "claude",
+            "openai"
+          ],
+          "description": "默认引擎（会话无归属时使用）"
+        },
+        "contextflow.minCacheTokens": {
+          "type": "number",
+          "default": 1024,
+          "description": "前缀缓存最小 token 门槛，低于此长度的前缀跳过缓存（厂商对短前缀缓存不生效甚至更贵）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "tsc -p ./ && node --test \"out/tests/*.test.js\"",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.7.3"
+  }
+}

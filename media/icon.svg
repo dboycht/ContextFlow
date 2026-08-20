@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- ContextFlow 图标：三层递缩横条 = 上下文前缀逐层累积（固定 → 历史 → 当前），复用色彩跟随主题 -->
+  <g fill="currentColor">
+    <rect x="3" y="3" width="18" height="4" rx="1"/>
+    <rect x="3" y="10" width="14" height="4" rx="1"/>
+    <rect x="3" y="17" width="10" height="4" rx="1"/>
+  </g>
+</svg>

@@ -1,0 +1,12 @@
+# 打包排除：开发/内部文件不进 vsix
+docs/**
+tests/**
+DEVELOPMENT.md
+src/**
+data/**
+out/tests/**
+**/*.map
+.gitignore
+.vscodeignore
+tsconfig.json
+*.vsix

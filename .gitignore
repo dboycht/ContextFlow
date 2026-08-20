@@ -1,0 +1,11 @@
+# 依赖与构建产物
+node_modules/
+out/
+*.vsix
+
+# 运行时用户数据（绝不提交/推送）
+data/
+
+# 系统与杂项
+.DS_Store
+*.log
