@@ -34,6 +34,20 @@ export interface SendOutcome {
   contextRef: ContextRef;
 }
 
+/** 有终端形式的引擎（创建对话 → 对话窗口直接变终端跑原生 CLI）；无终端（如 dsh）不可创建 */
+export function terminalCommandFor(engineId: string): string | undefined {
+  switch (engineId) {
+    case 'claude':
+      return 'claude';
+    case 'opencode':
+      return 'opencode';
+    case 'openai':
+      return 'codex';
+    default:
+      return undefined;
+  }
+}
+
 export class Orchestrator {
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -168,12 +182,13 @@ export class Orchestrator {
   }
 
   /** 面板引擎下拉数据源（同步：capabilities 声明值，立即返回，不阻塞 init） */
-  enginesSync(): Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }> {
+  enginesSync(): Array<{ engineId: string; label: string; models?: string[]; efforts?: string[]; terminal?: boolean }> {
     return this.deps.registry.list().map((a) => ({
       engineId: a.capabilities.engineId,
       label: a.capabilities.label,
       models: a.capabilities.models,
       efforts: a.capabilities.efforts,
+      terminal: terminalCommandFor(a.capabilities.engineId) !== undefined,
     }));
   }
 
@@ -181,8 +196,8 @@ export class Orchestrator {
    * 面板引擎下拉数据源（异步：opencode 等引擎查询真实模型列表）。
    * ⚠️ 会 await listModels（可能 spawn 子进程），仅供后台刷新，勿阻塞 init。
    */
-  async engines(): Promise<Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }>> {
-    const out: Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }> = [];
+  async engines(): Promise<Array<{ engineId: string; label: string; models?: string[]; efforts?: string[]; terminal?: boolean }>> {
+    const out: Array<{ engineId: string; label: string; models?: string[]; efforts?: string[]; terminal?: boolean }> = [];
     for (const adapter of this.deps.registry.list()) {
       let models = adapter.capabilities.models;
       if (adapter.listModels) {
@@ -197,6 +212,7 @@ export class Orchestrator {
         label: adapter.capabilities.label,
         models,
         efforts: adapter.capabilities.efforts,
+        terminal: terminalCommandFor(adapter.capabilities.engineId) !== undefined,
       });
     }
     return out;

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { Orchestrator } from '../core/orchestrator';
+import { terminalCommandFor, type Orchestrator } from '../core/orchestrator';
 import type { CacheMetricsSnapshot } from '../core/cache/metrics';
 import type { Message, Session } from '../core/session/session';
 import { PtyManager } from '../core/pty/ptyManager';
@@ -20,6 +20,8 @@ export interface EngineSummary {
   models?: string[];
   /** 可用推理强度（面板推理强度下拉数据源） */
   efforts?: string[];
+  /** 是否有终端 CLI（创建对话 → 内置终端跑原生 CLI；false = 不可创建） */
+  terminal?: boolean;
 }
 
 /** webview → extension（docs/04 第 4 节） */
@@ -52,19 +54,8 @@ export type UiState =
   | { type: 'notice'; text: string }
   | { type: 'error'; text: string };
 
-/** 有终端形式的引擎（创建对话 → 对话窗口直接变终端）；无终端（如 dsh）走消息流 */
-function terminalCommandFor(engineId: string): string | undefined {
-  switch (engineId) {
-    case 'claude':
-      return 'claude';
-    case 'opencode':
-      return 'opencode';
-    case 'openai':
-      return 'codex';
-    default:
-      return undefined;
-  }
-}
+/** 有终端形式的引擎（创建对话 → 对话窗口直接变终端）；无终端（如 dsh）不可创建 */
+// （terminalCommandFor 由 orchestrator 导出，panel 复用）
 
 /**
  * 侧边栏面板 Provider（docs/04）。
@@ -161,7 +152,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'createSession': {
-          // 创建时选定 Harness（绑定，后续不可更改）；模型/推理强度对话中可切
+          // 创建时选定 Harness（绑定，后续不可更改）；对话窗口 = 内置终端跑原生 CLI
+          const termCommand = terminalCommandFor(msg.engineId ?? '');
+          if (!termCommand) {
+            this.post(view, {
+              type: 'error',
+              text: '该 Harness 没有终端 CLI，暂不支持创建对话（仅 Claude Code / opencode / Codex）。',
+            });
+            break;
+          }
           const session = await orch.newSession(msg.engineId);
           this.currentSessionId = session.id;
           this.post(view, {
@@ -174,14 +173,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             engines: orch.enginesSync(),
             currentEngineId: session.engineId,
           });
-          // 引擎有终端形式 → 对话窗口直接变为终端类窗口（内置 xterm）
-          const termCommand = terminalCommandFor(session.engineId);
-          if (termCommand) {
-            this.ptyManager.spawn(session.id, termCommand, [], this.workspaceCwd());
-            this.post(view, { type: 'terminalStart', sessionId: session.id, command: termCommand });
-          } else {
-            this.post(view, { type: 'messages', sessionId: session.id, messages: [] });
-          }
+          this.ptyManager.spawn(session.id, termCommand, [], this.workspaceCwd());
+          this.post(view, { type: 'terminalStart', sessionId: session.id, command: termCommand });
           break;
         }
         case 'selectSession': {

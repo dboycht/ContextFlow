@@ -98,17 +98,25 @@
 
   function renderCreatePanel() {
     const box = $('cp-engines');
-    box.innerHTML = state.engines.map((e) =>
-      '<label class="cp-engine' + (e.engineId === state.currentEngineId ? ' active' : '') +
-      '" data-id="' + escapeHtml(e.engineId) + '">' +
-      '<input type="radio" name="cp-engine" value="' + escapeHtml(e.engineId) + '"' +
-      (e.engineId === state.currentEngineId ? ' checked' : '') + '>' +
-      '<span>' + escapeHtml(e.label) + '</span>' +
-      '<button class="cp-term" data-term="' + escapeHtml(e.engineId) + '" title="在集成终端打开原生 CLI（完整交互）">终端</button>' +
-      '</label>'
-    ).join('') || '<div class="muted">未检测到可用引擎</div>';
+    box.innerHTML = state.engines.map((e) => {
+      const disabled = e.terminal === false;
+      const status = e.terminal === false
+        ? '<span class="muted" style="font-size:11px;margin-left:auto">无终端 CLI</span>'
+        : '<button class="cp-term" data-term="' + escapeHtml(e.engineId) + '" title="在集成终端打开原生 CLI（完整交互）">终端</button>';
+      return '<label class="cp-engine' + (e.engineId === state.currentEngineId ? ' active' : '') +
+        '" data-id="' + escapeHtml(e.engineId) + '"' +
+        (disabled ? ' style="opacity:.5"' : '') + '>' +
+        '<input type="radio" name="cp-engine" value="' + escapeHtml(e.engineId) + '"' +
+        (disabled ? ' disabled' : '') +
+        (e.engineId === state.currentEngineId ? ' checked' : '') + '>' +
+        '<span>' + escapeHtml(e.label) + '</span>' +
+        status +
+        '</label>';
+    }).join('') || '<div class="muted">未检测到可用引擎</div>';
     renderCreateModelEffort();
-    $('cp-create').disabled = state.busy || state.engines.length === 0;
+    const current = state.engines.find((e) => e.engineId === state.currentEngineId);
+    // 无终端 CLI 的引擎不可创建（对话走内置终端）
+    $('cp-create').disabled = state.busy || state.engines.length === 0 || current?.terminal === false;
   }
 
   function renderCreateModelEffort() {
@@ -418,6 +426,11 @@
   });
   $('cp-create').addEventListener('click', () => {
     if (state.busy || state.engines.length === 0) return;
+    const current = state.engines.find((e) => e.engineId === state.currentEngineId);
+    if (current?.terminal === false) {
+      showNotice('该 Harness 没有终端 CLI，暂不支持创建对话');
+      return;
+    }
     closeCreatePanel();
     vscode.postMessage({ type: 'createSession', engineId: state.currentEngineId });
   });

@@ -141,7 +141,7 @@ export function renderPanelHtml(options: PanelHtmlOptions): string {
           <select id="cp-effort" title="推理强度"></select>
         </div>
         <div class="cp-row">
-          <button id="cp-create" class="cp-create">创建并对话</button>
+          <button id="cp-create" class="cp-create">创建终端会话</button>
           <button id="cp-cancel" class="btn">取消</button>
         </div>
       </div>
