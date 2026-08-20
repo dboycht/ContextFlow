@@ -20,8 +20,8 @@ export class ClaudeCodeAdapter extends CliAdapterBase {
     maxContextTokens: 200_000,
     supportsCache: true,
     models: ['default'],
-    // 推理强度（--effort <level>；合法枚举待按 Claude Code 文档校准，先仅 default）
-    efforts: ['default'],
+    // 推理强度（--effort <level>，2026-08-20 实测 high/low 均合法；default = 不传）
+    efforts: ['default', 'low', 'medium', 'high'],
     // 参考单价（元/百万 token，参考值；以 Anthropic 定价页为准，可配置覆写）
     pricing: { input: 3, cachedInput: 0.3, output: 15 },
   };

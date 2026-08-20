@@ -13,6 +13,10 @@ import type { SendResult, StreamHandlers } from './adapters/types';
  * 关键闭环编排器（docs/03 §6）：
  * router.decide → sessionStore.historyPrefix → prefixCache.prepare → adapter.send → appendMessage
  * 只有「已确认」的轮次（发送并回写后）才进历史前缀。
+ *
+ * ⚠️ 不注入自定义系统提示（persona）：ContextFlow 只做编排/缓存/连接，
+ * 各 Harness 使用自身默认身份（如 Claude Code 的 CLAUDE.md、opencode 的配置），
+ * 避免模型自称 ContextFlow。
  */
 export interface OrchestratorDeps {
   router: Router;
@@ -30,17 +34,8 @@ export interface SendOutcome {
   contextRef: ContextRef;
 }
 
-/** 默认系统提示（P1 起可由设置/会话 meta 覆写） */
-const DEFAULT_SYSTEM_PROMPT =
-  'You are ContextFlow, an AI coding assistant that unifies multiple AI coding engines ' +
-  'with cached context to reduce token costs. Answer concisely.';
-
 export class Orchestrator {
-  private readonly systemPrompt: string;
-
-  constructor(private readonly deps: OrchestratorDeps) {
-    this.systemPrompt = DEFAULT_SYSTEM_PROMPT;
-  }
+  constructor(private readonly deps: OrchestratorDeps) {}
 
   /** 新建会话：归属引擎走 router（默认/记忆），亲和性锚点即创建时的引擎 */
   async newSession(requestedEngineId?: string): Promise<Session> {
@@ -93,14 +88,9 @@ export class Orchestrator {
       session.engineId = decision.engineId;
     }
 
-    // 3. 历史前缀（已确认轮次）+ 缓存 prepare（固定前缀在前、问题在后）
+    // 3. 历史前缀（已确认轮次）+ 缓存 prepare（不注入自定义系统提示，引擎用自身 persona）
     const history = sessionStore.historyPrefix(sessionId);
-    const contextRef = await prefixCache.prepare(
-      [this.systemPrompt],
-      history,
-      text,
-      decision.engineId,
-    );
+    const contextRef = await prefixCache.prepare([], history, text, decision.engineId);
 
     // 4. 发送到目标引擎（流式优先，非流式回退）
     const adapter = registry.get(decision.engineId);
@@ -177,16 +167,26 @@ export class Orchestrator {
     this.deps.sessionStore.rename(sessionId, title);
   }
 
-  /** 面板引擎下拉数据源 */
-  engines(): Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }> {
-    return this.deps.registry
-      .list()
-      .map((a) => ({
-        engineId: a.capabilities.engineId,
-        label: a.capabilities.label,
-        models: a.capabilities.models,
-        efforts: a.capabilities.efforts,
-      }));
+  /** 面板引擎下拉数据源（异步：opencode 等引擎查询真实模型列表） */
+  async engines(): Promise<Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }>> {
+    const out: Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }> = [];
+    for (const adapter of this.deps.registry.list()) {
+      let models = adapter.capabilities.models;
+      if (adapter.listModels) {
+        try {
+          models = await adapter.listModels();
+        } catch {
+          // 查询失败保持声明值
+        }
+      }
+      out.push({
+        engineId: adapter.capabilities.engineId,
+        label: adapter.capabilities.label,
+        models,
+        efforts: adapter.capabilities.efforts,
+      });
+    }
+    return out;
   }
 
   metricsSnapshot() {

@@ -80,6 +80,11 @@ export interface AgentAdapter {
    * 不支持流式的引擎省略本方法，编排层回退 send（一次性输出）。
    */
   sendStream?(input: SendInput, handlers: StreamHandlers): Promise<SendResult>;
+  /**
+   * 可选：查询引擎可用模型列表（如 opencode models）。
+   * 未实现时用 capabilities.models（静态声明）。
+   */
+  listModels?(): Promise<string[]>;
   healthCheck(): Promise<boolean>;
   estimateCost(usage: SendResult['usage']): number;
 }

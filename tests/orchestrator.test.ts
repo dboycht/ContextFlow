@@ -125,9 +125,10 @@ test('手动切换引擎：migrated=true、归属更新、消息溯源新引擎'
 test('显式缓存厂商：SendResult.cacheId 回填到缓存层 entry', async () => {
   const { orchestrator, deepseek, cacheStore } = makeCore();
   const session = await orchestrator.newSession('deepseek');
-  deepseek.cacheIdByCall = ['cache-x'];
-  await orchestrator.send(session.id, '问题');
-  // prefixCache 在 prepare 时已 getOrCreate 该前缀 entry，cacheId 应被回填
+  // 首次 send 无历史 → 前缀为空 → 跳过缓存；第二次才有历史前缀参与缓存
+  deepseek.cacheIdByCall = [undefined, 'cache-x'];
+  await orchestrator.send(session.id, '问题一');
+  await orchestrator.send(session.id, '问题二');
   const entries = cacheStore.listByEngine('deepseek');
   assert.equal(entries.length, 1);
   assert.equal(entries[0]!.cacheId, 'cache-x');

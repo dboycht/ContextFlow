@@ -71,10 +71,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     try {
       switch (msg.type) {
         case 'init': {
+          const engines = await orch.engines();
           this.post(view, {
             type: 'engines',
-            engines: orch.engines(),
-            currentEngineId: orch.engines()[0]?.engineId,
+            engines,
+            currentEngineId: engines[0]?.engineId,
           });
           this.post(view, {
             type: 'sessions',
@@ -102,7 +103,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           });
           this.post(view, {
             type: 'engines',
-            engines: orch.engines(),
+            engines: await orch.engines(),
             currentEngineId: session.engineId,
           });
           this.post(view, { type: 'messages', sessionId: session.id, messages: [] });
@@ -124,7 +125,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           if (session) {
             this.post(view, {
               type: 'engines',
-              engines: orch.engines(),
+              engines: await orch.engines(),
               currentEngineId: session.engineId,
             });
           }
@@ -147,7 +148,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           orch.switchEngine(msg.sessionId, msg.engineId);
           this.post(view, {
             type: 'engines',
-            engines: orch.engines(),
+            engines: await orch.engines(),
             currentEngineId: msg.engineId,
           });
           this.post(view, { type: 'notice', text: '正在目标引擎重建缓存…' });
@@ -188,7 +189,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });
             this.post(view, {
               type: 'engines',
-              engines: orch.engines(),
+              engines: await orch.engines(),
               currentEngineId: outcome.decision.engineId,
             });
             // 首条消息可能生成标题，刷新列表
