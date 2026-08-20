@@ -8,8 +8,20 @@ import { PanelProvider } from './webview/panel';
  * 全部能力经 core 编排层（orchestrator）驱动（docs/04）。
  */
 export function activate(context: vscode.ExtensionContext): void {
-  // 诊断：扩展宿主运行时版本（better-sqlite3 ABI 排查用，见 DEVELOPMENT.md 排坑记录）
+  // 诊断：扩展宿主运行时版本（better-sqlite3 / node-pty ABI 排查用）
   console.log('[ContextFlow] runtime', JSON.stringify(process.versions));
+  // 运行时探测落盘（供开发诊断读取；产品无此文件不影响）
+  try {
+    const fs = require('node:fs') as typeof import('node:fs');
+    const path = require('node:path') as typeof import('node:path');
+    fs.writeFileSync(
+      path.join(context.globalStorageUri.fsPath, 'runtime.json'),
+      JSON.stringify(process.versions, null, 2),
+      'utf8',
+    );
+  } catch {
+    /* 诊断文件写失败忽略 */
+  }
 
   let core: Core;
   try {
@@ -28,7 +40,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       'contextflow.panel',
-      new PanelProvider(core.orchestrator),
+      new PanelProvider(core.orchestrator, context),
       { webviewOptions: { retainContextWhenHidden: true } },
     ),
   );

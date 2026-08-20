@@ -82,12 +82,17 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "tsc -p ./ && node --test \"out/tests/**/*.test.js\"",
+    "test:pty": "tsc -p ./ && node scripts/test-pty.cjs",
     "sqlite:electron": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-sqlite.ps1 -Target electron",
     "sqlite:node": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-sqlite.ps1 -Target node",
+    "native:electron": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-native.ps1 -Target electron",
+    "native:node": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-native.ps1 -Target node",
     "package": "vsce package"
   },
   "dependencies": {
-    "better-sqlite3": "^12.2.0"
+    "better-sqlite3": "^12.2.0",
+    "node-pty": "^1.1.0",
+    "xterm": "^5.3.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

@@ -10,8 +10,9 @@ import type { spawn } from 'node:child_process';
  * Windows 上 npm 全局安装的是 .cmd 包装（CreateProcess 不执行 .cmd），
  * 需读取包装内容提取真实 .exe 路径（如 %dp0%\node_modules\...\bin\claude.exe）。
  * 非 Windows 或解析失败时原样返回命令名（依赖 PATH）。
+ * （pty 终端也复用本函数解析命令。）
  */
-function resolveCliExecutable(command: string): string {
+export function resolveCliExecutable(command: string): string {
   if (command.includes('/') || command.includes('\\')) {
     return command; // 已是显式路径
   }

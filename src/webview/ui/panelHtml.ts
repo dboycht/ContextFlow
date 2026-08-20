@@ -1,15 +1,22 @@
 /**
  * Webview 面板 UI（原生 HTML/CSS/JS，docs/04）。
- * 三大区块：① 会话列表 ② 对话流 + 输入 ③ 缓存状态条；引擎切换下拉。
+ * 三大区块：① 会话列表 ② 对话流 + 输入（或终端型会话的 xterm）③ 缓存状态条。
  * 所有字符串经 escapeHtml 转义（回复文本来自引擎，视为不可信输入）。
  */
 
-export function renderPanelHtml(): string {
+export interface PanelHtmlOptions {
+  /** xterm.js 的 webview 资源 URI */
+  xtermJsUri: string;
+  xtermCssUri: string;
+}
+
+export function renderPanelHtml(options: PanelHtmlOptions): string {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="${options.xtermCssUri}">
 <style>
   :root {
     --border: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
@@ -92,6 +99,11 @@ export function renderPanelHtml(): string {
   .cp-create { background: var(--accent); color: var(--accent-fg); border: none;
                border-radius: 4px; padding: 5px 16px; cursor: pointer; font-weight: 500; }
   .cp-create:disabled { opacity: .5; cursor: default; }
+  /* 内置终端（xterm） */
+  .terminal-header { padding: 6px 12px; font-size: 12px; font-weight: 600;
+                     border-bottom: 1px solid var(--border); color: var(--muted); }
+  .terminal { flex: 1; min-height: 0; padding: 6px 4px; background: #000; }
+  .terminal .xterm { height: 100%; }
   /* ③ 缓存状态条 */
   .statusbar { border-top: 1px solid var(--border); padding: 5px 12px; font-size: 11px;
                color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap;
@@ -126,12 +138,14 @@ export function renderPanelHtml(): string {
           <button id="cp-cancel" class="btn">取消</button>
         </div>
       </div>
+      <div id="terminal-header" class="terminal-header hidden"></div>
+      <div id="terminal-container" class="terminal hidden"></div>
       <div class="messages" id="messages">
         <div class="empty">点击「＋ 新建」选择 Harness 开始对话</div>
       </div>
       <div id="notice" class="notice hidden"></div>
       <div id="error" class="error hidden"></div>
-      <div class="composer">
+      <div class="composer" id="composer">
         <select id="engine-select" title="当前会话绑定的 Harness"></select>
         <select id="model-select" title="模型"></select>
         <select id="effort-select" title="推理强度"></select>
@@ -141,6 +155,7 @@ export function renderPanelHtml(): string {
       <div class="statusbar" id="statusbar"></div>
     </section>
   </div>
+<script src="${options.xtermJsUri}"></script>
 <script>
 (function () {
   const vscode = acquireVsCodeApi();
@@ -151,6 +166,7 @@ export function renderPanelHtml(): string {
     messages: [], metrics: null,
     busy: false, busyHint: '',
     creating: false,
+    terminalSessionId: undefined,
     streaming: null, // 流式气泡：{ wrap, thinking, tools, textEl }
   };
 
@@ -291,6 +307,37 @@ export function renderPanelHtml(): string {
 
   function scrollToBottom() {
     $('messages').scrollTop = $('messages').scrollHeight;
+  }
+
+  /* —— 内置终端（xterm）—— */
+  let term = null;
+  function ensureTerminal() {
+    if (term) return term;
+    term = new Terminal({ convertEol: true, cursorBlink: true });
+    term.open($('terminal-container'));
+    term.onData((data) => vscode.postMessage({ type: 'ptyInput', sessionId: state.terminalSessionId, data }));
+    term.onResize((size) =>
+      vscode.postMessage({ type: 'ptyResize', sessionId: state.terminalSessionId, cols: size.cols, rows: size.rows }));
+    return term;
+  }
+  function showTerminal(sessionId, command) {
+    state.terminalSessionId = sessionId;
+    $('messages').classList.add('hidden');
+    $('composer').classList.add('hidden');
+    $('statusbar').classList.add('hidden');
+    $('terminal-header').classList.remove('hidden');
+    $('terminal-header').textContent = '终端 · ' + command + '（Ctrl+C 退出 · /model 切模型）';
+    $('terminal-container').classList.remove('hidden');
+    ensureTerminal().reset();
+    ensureTerminal().focus();
+  }
+  function showMessages() {
+    state.terminalSessionId = undefined;
+    $('terminal-container').classList.add('hidden');
+    $('terminal-header').classList.add('hidden');
+    $('messages').classList.remove('hidden');
+    $('composer').classList.remove('hidden');
+    $('statusbar').classList.remove('hidden');
   }
 
   /** 消息到达：流式期间 user 插到气泡前、assistant 结束后替换为完整消息 */
@@ -443,8 +490,22 @@ export function renderPanelHtml(): string {
         renderStatus();
         break;
       case 'messages':
+        showMessages();
         state.messages = msg.messages;
         renderMessages();
+        break;
+      case 'terminalStart':
+        showTerminal(msg.sessionId, msg.command);
+        break;
+      case 'ptyData':
+        if (term && state.terminalSessionId === msg.sessionId) {
+          term.write(msg.data);
+        }
+        break;
+      case 'ptyExit':
+        if (term && state.terminalSessionId === msg.sessionId) {
+          term.write('\r\n\x1b[33m[进程已退出 code=' + msg.exitCode + ']\x1b[0m\r\n');
+        }
         break;
       case 'message':
         handleMessage(msg.message);

@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import type { Orchestrator } from '../core/orchestrator';
 import type { CacheMetricsSnapshot } from '../core/cache/metrics';
 import type { Message, Session } from '../core/session/session';
-import { renderPanelHtml } from './ui/panelHtml';
+import { PtyManager } from '../core/pty/ptyManager';
+import { renderPanelHtml, type PanelHtmlOptions } from './ui/panelHtml';
 
 /** 面板列表摘要 */
 export interface SessionSummary {
@@ -29,6 +30,8 @@ export type UiRequest =
   | { type: 'deleteSession'; sessionId: string }
   | { type: 'selectEngine'; engineId: string; sessionId: string }
   | { type: 'openTerminal'; engineId: string }
+  | { type: 'ptyInput'; sessionId: string; data: string }
+  | { type: 'ptyResize'; sessionId: string; cols: number; rows: number }
   | { type: 'send'; sessionId?: string; text: string; engineId?: string; model?: string; effort?: string };
 
 /** extension → webview */
@@ -42,31 +45,74 @@ export type UiState =
   | { type: 'streamText'; delta: string }
   | { type: 'streamThinking'; delta: string }
   | { type: 'streamTool'; label: string }
+  | { type: 'terminalStart'; sessionId: string; command: string }
+  | { type: 'ptyData'; sessionId: string; data: string }
+  | { type: 'ptyExit'; sessionId: string; exitCode: number }
   | { type: 'busy'; busy: boolean; hint?: string }
   | { type: 'notice'; text: string }
   | { type: 'error'; text: string };
 
+/** 有终端形式的引擎（创建对话 → 对话窗口直接变终端）；无终端（如 dsh）走消息流 */
+function terminalCommandFor(engineId: string): string | undefined {
+  switch (engineId) {
+    case 'claude':
+      return 'claude';
+    case 'opencode':
+      return 'opencode';
+    case 'openai':
+      return 'codex';
+    default:
+      return undefined;
+  }
+}
+
 /**
  * 侧边栏面板 Provider（docs/04）。
  * 后端持有最新状态，前端被动渲染（状态单向流）。
+ * 终端型会话：PTY（node-pty）spawn 原生 CLI，输出/输入经 webview xterm.js 桥接。
  */
 export class PanelProvider implements vscode.WebviewViewProvider {
   private currentSessionId: string | undefined;
+  private currentView: vscode.WebviewView | undefined;
+  private readonly ptyManager: PtyManager;
 
-  constructor(private readonly orchestrator: Orchestrator) {}
+  constructor(
+    private readonly orchestrator: Orchestrator,
+    private readonly context: vscode.ExtensionContext,
+  ) {
+    this.ptyManager = new PtyManager({
+      cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      onData: (sessionId, data) => this.currentView && this.post(this.currentView, { type: 'ptyData', sessionId, data }),
+      onExit: (sessionId, exitCode) =>
+        this.currentView && this.post(this.currentView, { type: 'ptyExit', sessionId, exitCode }),
+    });
+  }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.currentView = webviewView;
     webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = renderPanelHtml();
+    const htmlOptions: PanelHtmlOptions = {
+      xtermJsUri: webviewView.webview.asWebviewUri(
+        vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm', 'xterm.js'),
+      ).toString(),
+      xtermCssUri: webviewView.webview.asWebviewUri(
+        vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm', 'xterm.css'),
+      ).toString(),
+    };
+    webviewView.webview.html = renderPanelHtml(htmlOptions);
     webviewView.webview.onDidReceiveMessage((msg) => {
       void this.handleMessage(webviewView, msg as UiRequest);
+    });
+    webviewView.onDidDispose(() => {
+      if (this.currentView === webviewView) {
+        this.currentView = undefined;
+      }
     });
   }
 
   /**
    * 在集成终端中打开对应 Harness 的原生 CLI（如 claude / opencode）。
-   * 终端是 shell，能解析 npm 的 .cmd 包装；原生 TUI 提供完整交互
-   * （逐字流式/思考/工具/权限/模型切换），绕开 CLI 输出流式粒度的限制。
+   * 终端是 shell，能解析 npm 的 .cmd 包装；原生 TUI 提供完整交互。
    */
   private openTerminal(engineId: string): void {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -102,11 +148,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           });
           this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });
           if (this.currentSessionId) {
-            this.post(view, {
-              type: 'messages',
-              sessionId: this.currentSessionId,
-              messages: orch.getSession(this.currentSessionId)?.messages ?? [],
-            });
+            this.pushSessionView(view, this.currentSessionId);
           }
           break;
         }
@@ -124,22 +166,25 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             engines: await orch.engines(),
             currentEngineId: session.engineId,
           });
-          this.post(view, { type: 'messages', sessionId: session.id, messages: [] });
+          // 引擎有终端形式 → 对话窗口直接变为终端类窗口（内置 xterm）
+          const termCommand = terminalCommandFor(session.engineId);
+          if (termCommand) {
+            this.ptyManager.spawn(session.id, termCommand, [], this.workspaceCwd());
+            this.post(view, { type: 'terminalStart', sessionId: session.id, command: termCommand });
+          } else {
+            this.post(view, { type: 'messages', sessionId: session.id, messages: [] });
+          }
           break;
         }
         case 'selectSession': {
           this.currentSessionId = msg.sessionId;
-          const session = orch.getSession(msg.sessionId);
           this.post(view, {
             type: 'sessions',
             sessions: toSummaries(orch.listSessions()),
             currentSessionId: msg.sessionId,
           });
-          this.post(view, {
-            type: 'messages',
-            sessionId: msg.sessionId,
-            messages: session?.messages ?? [],
-          });
+          this.pushSessionView(view, msg.sessionId);
+          const session = orch.getSession(msg.sessionId);
           if (session) {
             this.post(view, {
               type: 'engines',
@@ -150,6 +195,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'deleteSession': {
+          this.ptyManager.kill(msg.sessionId);
           orch.deleteSession(msg.sessionId);
           if (this.currentSessionId === msg.sessionId) {
             this.currentSessionId = undefined;
@@ -174,6 +220,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         }
         case 'openTerminal': {
           this.openTerminal(msg.engineId);
+          break;
+        }
+        case 'ptyInput': {
+          this.ptyManager.write(msg.sessionId, msg.data);
+          break;
+        }
+        case 'ptyResize': {
+          this.ptyManager.resize(msg.sessionId, msg.cols, msg.rows);
           break;
         }
         case 'send': {
@@ -232,6 +286,24 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         text: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /** 推送会话主区视图：终端型 → terminalStart（前端切 xterm）；否则消息流 */
+  private pushSessionView(view: vscode.WebviewView, sessionId: string): void {
+    const pty = this.ptyManager.get(sessionId);
+    if (pty) {
+      this.post(view, { type: 'terminalStart', sessionId, command: pty.command });
+    } else {
+      this.post(view, {
+        type: 'messages',
+        sessionId,
+        messages: this.orchestrator.getSession(sessionId)?.messages ?? [],
+      });
+    }
+  }
+
+  private workspaceCwd(): string | undefined {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
 }
 
