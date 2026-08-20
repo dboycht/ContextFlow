@@ -6,6 +6,8 @@ import { PrefixCache } from './cache/prefixCache';
 import { AdapterRegistry } from './adapters/registry';
 import { DeepSeekAdapter } from './adapters/deepseek';
 import { DshJsonRpcTransport } from './adapters/dshTransport';
+import { SessionStore } from './session/sessionStore';
+import { Router } from './session/router';
 import { ConfigStore } from './config/configStore';
 
 /**
@@ -18,6 +20,8 @@ export interface Core {
   prefixCache: PrefixCache;
   config: ConfigStore;
   registry: AdapterRegistry;
+  sessionStore: SessionStore;
+  router: Router;
 }
 
 export function createCore(storagePath: string): Core {
@@ -51,5 +55,9 @@ export function createCore(storagePath: string): Core {
     ),
   );
 
-  return { cacheStore, metrics, prefixCache, config, registry };
+  // 会话层：跨模型统一会话 + 路由（docs/03）
+  const sessionStore = new SessionStore(dbPath);
+  const router = new Router(registry, config);
+
+  return { cacheStore, metrics, prefixCache, config, registry, sessionStore, router };
 }

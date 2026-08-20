@@ -169,9 +169,18 @@ test('Dsh 驱动：start→send→close 全流程（mock 子进程）', async ()
   const promptFrame = JSON.parse(stdinFrames[1]!) as { id: number; method: string; params: { sessionId: string } };
   assert.equal(promptFrame.method, 'session/prompt');
   assert.equal(promptFrame.params.sessionId, 's1');
-  // 事件通知：一段 assistant 文本
+  // 事件通知：一段 assistant 文本（真实 SessionEvent 结构，2026-08-20 联调校准）
   child.stdout.write(
-    `${JSON.stringify({ method: 'session.event', params: { text: '回复第一段' } })}\n`,
+    `${JSON.stringify({
+      method: 'session.event',
+      params: {
+        sessionId: 's1',
+        event: {
+          type: 'assistant/message',
+          data: { message: { content: [{ type: 'text', text: '回复第一段' }] } },
+        },
+      },
+    })}\n`,
   );
   // prompt 响应（enqueue receipt）
   child.stdout.write(

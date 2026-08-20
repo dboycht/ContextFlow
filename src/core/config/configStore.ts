@@ -38,6 +38,8 @@ export interface DeepSeekConfig {
  * 默认值均为参考值；dsh 安装路径等必须由用户在设置里配置（P1 面板提供 UI）。
  */
 export class ConfigStore {
+  private defaultModel = 'deepseek';
+
   private deepseek: DeepSeekConfig = {
     command: 'node',
     // TODO(联调): 指向本机 dsh jsonrpc-demo bin + cordis.yml；P1 提供配置 UI
@@ -62,5 +64,14 @@ export class ConfigStore {
       ...partial,
       pricing: partial.pricing ? { ...partial.pricing } : this.deepseek.pricing,
     };
+  }
+
+  /** 默认引擎（新建会话无归属时使用；router 的 memory 策略写这里） */
+  getDefaultModel(): string {
+    return this.defaultModel;
+  }
+
+  setDefaultModel(engineId: string): void {
+    this.defaultModel = engineId;
   }
 }
