@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { resolve } from 'node:path';
 
 /**
  * 驱动 DeepSeek Harness 的传输层（docs/02 §4.1 调研结论：SDK JSON-RPC 通道）。
@@ -206,44 +207,49 @@ export type TurnExtractor = (
 ) => void;
 
 /**
- * 默认提取器（启发式，标注联调 TODO）：
- * 从 session.event 通知中尽力收集文本块与 usage 字段。
- * ⚠️ 真实 dsh-session SessionEvent 结构需在真实 Harness 联调时按
- * `packages/session` 的事件载荷校准（见 DEVELOPMENT.md 排坑记录）。
+ * 默认提取器：解析真实 dsh SessionEvent（2026-08-20 联调校准）。
+ * 结构（packages/session 事件载荷）：session.event 通知的 params={sessionId, event}，
+ * event = { type: 'assistant/message', data: { message: { content: ContentBlock[] }, usage: TokenUsage } }。
+ * TokenUsage 为 disjoint 语义（packages/llm types.ts）：inputTokens=未命中输入、
+ * cacheReadTokens=缓存命中读取、cacheWriteTokens=缓存写入（计费输入=三者之和）。
+ * 映射到 ContextFlow 口径：inputTokens(总输入)=input+cacheRead+cacheWrite，cacheHitTokens=cacheRead。
  */
 export const defaultTurnExtractor: TurnExtractor = (notification, acc) => {
-  const params = notification.params as Record<string, unknown> | undefined;
-  if (!params) {
+  if (notification.method !== 'session.event') {
     return;
   }
-  const text =
-    typeof params['text'] === 'string'
-      ? params['text']
-      : typeof params['content'] === 'string'
-        ? params['content']
-        : undefined;
-  if (typeof text === 'string' && text.length > 0) {
-    acc.texts.push(text);
+  const params = notification.params as Record<string, unknown> | undefined;
+  const event = params?.['event'] as Record<string, unknown> | undefined;
+  if (!event || event['type'] !== 'assistant/message') {
+    return;
   }
-  const usage = params['usage'] as
-    | Record<string, unknown>
-    | undefined;
+  const data = event['data'] as Record<string, unknown> | undefined;
+  const message = data?.['message'] as Record<string, unknown> | undefined;
+  const content = message?.['content'];
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      const b = block as Record<string, unknown>;
+      if (b?.['type'] === 'text' && typeof b['text'] === 'string' && b['text'].length > 0) {
+        acc.texts.push(b['text']);
+      }
+    }
+  }
+  const usage = data?.['usage'] as Record<string, unknown> | undefined;
   if (usage) {
+    const input = num(usage['inputTokens']) ?? 0;
+    const cacheRead = num(usage['cacheReadTokens']) ?? 0;
+    const cacheWrite = num(usage['cacheWriteTokens']) ?? 0;
     acc.usage = {
-      inputTokens:
-        (usage['inputTokens'] as number) ??
-        (usage['promptTokens'] as number) ??
-        0,
-      outputTokens:
-        (usage['outputTokens'] as number) ??
-        (usage['completionTokens'] as number) ??
-        0,
-      cacheHitTokens:
-        (usage['cacheHitTokens'] as number) ??
-        (usage['promptCacheHitTokens'] as number),
+      inputTokens: input + cacheRead + cacheWrite,
+      outputTokens: num(usage['outputTokens']) ?? 0,
+      cacheHitTokens: cacheRead > 0 || cacheWrite > 0 ? cacheRead : undefined,
     };
   }
 };
+
+function num(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
 
 export interface DshJsonRpcTransportOptions {
   /** 注入 spawn（默认 node:child_process.spawn），便于单测 */
@@ -254,6 +260,8 @@ export interface DshJsonRpcTransportOptions {
   idleTimeoutMs?: number;
   /** shutdown 后等待进程退出的超时（ms），默认 5_000 */
   exitTimeoutMs?: number;
+  /** dsh 进程 stderr 诊断回调（联调/排坑用；stdout 只走协议帧） */
+  stderrSink?: (chunk: string) => void;
 }
 
 const IDLE_STATUS = 'idle';
@@ -270,6 +278,7 @@ export class DshJsonRpcTransport implements DshTransport {
   private readonly extractor: TurnExtractor;
   private readonly idleTimeoutMs: number;
   private readonly exitTimeoutMs: number;
+  private readonly stderrSink?: (chunk: string) => void;
 
   constructor(
     private readonly launch: DshLaunchSpec,
@@ -279,6 +288,7 @@ export class DshJsonRpcTransport implements DshTransport {
     this.extractor = options.extractor ?? defaultTurnExtractor;
     this.idleTimeoutMs = options.idleTimeoutMs ?? 120_000;
     this.exitTimeoutMs = options.exitTimeoutMs ?? 5_000;
+    this.stderrSink = options.stderrSink;
   }
 
   /** 幂等：spawn 进程并完成 initialize 握手 */
@@ -293,11 +303,18 @@ export class DshJsonRpcTransport implements DshTransport {
       windowsHide: true,
     });
     this.child = child;
+    if (this.stderrSink) {
+      child.stderr?.on('data', (chunk: Buffer | string) =>
+        this.stderrSink?.(chunk.toString('utf8')),
+      );
+    }
     const rpc = new JsonRpcLineTransport(child.stdout, child.stdin, {
       onNotification: (n) => this.notificationHandler?.(n),
     });
     this.rpc = rpc;
+    // InitializeParams.cwd 为必填（协议类型），须为绝对路径——dsh 记录到会话头
     await rpc.request('initialize', {
+      cwd: resolve(this.launch.cwd ?? process.cwd()),
       provider: this.launch.env?.['DSH_ADAPTER_PROVIDER'] ?? 'deepseek-official',
       model: this.launch.env?.['DSH_ADAPTER_MODEL'] ?? 'deepseek-v4-flash',
     });
