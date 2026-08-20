@@ -36,7 +36,7 @@ export class OpencodeAdapter extends CliAdapterBase {
     }
     const models: string[] = [];
     await this.transport.runStream(
-      { command: this.getCommand(), args: ['models'], timeoutMs: 30_000 },
+      { command: this.getCommand(), args: ['models'], timeoutMs: 8_000 },
       (line) => {
         const text = line.trim();
         if (text && !text.startsWith('#') && text.includes('/')) {

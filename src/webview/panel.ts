@@ -135,12 +135,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     try {
       switch (msg.type) {
         case 'init': {
-          const engines = await orch.engines();
+          // 立即推声明值（不阻塞 init）；真实模型列表后台刷新
+          const engines = this.orchestrator.enginesSync();
           this.post(view, {
             type: 'engines',
             engines,
             currentEngineId: engines[0]?.engineId,
           });
+          void this.refreshEngines(view);
           this.post(view, {
             type: 'sessions',
             sessions: toSummaries(orch.listSessions()),
@@ -163,7 +165,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           });
           this.post(view, {
             type: 'engines',
-            engines: await orch.engines(),
+            engines: orch.enginesSync(),
             currentEngineId: session.engineId,
           });
           // 引擎有终端形式 → 对话窗口直接变为终端类窗口（内置 xterm）
@@ -188,7 +190,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           if (session) {
             this.post(view, {
               type: 'engines',
-              engines: await orch.engines(),
+              engines: orch.enginesSync(),
               currentEngineId: session.engineId,
             });
           }
@@ -212,7 +214,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           orch.switchEngine(msg.sessionId, msg.engineId);
           this.post(view, {
             type: 'engines',
-            engines: await orch.engines(),
+            engines: orch.enginesSync(),
             currentEngineId: msg.engineId,
           });
           this.post(view, { type: 'notice', text: '正在目标引擎重建缓存…' });
@@ -265,7 +267,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });
             this.post(view, {
               type: 'engines',
-              engines: await orch.engines(),
+              engines: orch.enginesSync(),
               currentEngineId: outcome.decision.engineId,
             });
             // 首条消息可能生成标题，刷新列表
@@ -285,6 +287,25 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         type: 'error',
         text: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  /** 后台刷新引擎真实模型列表（opencode 等），完成后更新面板下拉 */
+  private async refreshEngines(view: vscode.WebviewView): Promise<void> {
+    try {
+      const engines = await this.orchestrator.engines();
+      if (this.currentView !== view) {
+        return;
+      }
+      this.post(view, {
+        type: 'engines',
+        engines,
+        currentEngineId: this.currentSessionId
+          ? this.orchestrator.getSession(this.currentSessionId)?.engineId
+          : engines[0]?.engineId,
+      });
+    } catch {
+      /* 刷新失败保持声明值 */
     }
   }
 

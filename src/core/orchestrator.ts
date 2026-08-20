@@ -167,7 +167,20 @@ export class Orchestrator {
     this.deps.sessionStore.rename(sessionId, title);
   }
 
-  /** 面板引擎下拉数据源（异步：opencode 等引擎查询真实模型列表） */
+  /** 面板引擎下拉数据源（同步：capabilities 声明值，立即返回，不阻塞 init） */
+  enginesSync(): Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }> {
+    return this.deps.registry.list().map((a) => ({
+      engineId: a.capabilities.engineId,
+      label: a.capabilities.label,
+      models: a.capabilities.models,
+      efforts: a.capabilities.efforts,
+    }));
+  }
+
+  /**
+   * 面板引擎下拉数据源（异步：opencode 等引擎查询真实模型列表）。
+   * ⚠️ 会 await listModels（可能 spawn 子进程），仅供后台刷新，勿阻塞 init。
+   */
   async engines(): Promise<Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }>> {
     const out: Array<{ engineId: string; label: string; models?: string[]; efforts?: string[] }> = [];
     for (const adapter of this.deps.registry.list()) {
