@@ -92,6 +92,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     this.currentView = webviewView;
     webviewView.webview.options = { enableScripts: true };
     const htmlOptions: PanelHtmlOptions = {
+      cspSource: webviewView.webview.cspSource,
       xtermJsUri: webviewView.webview.asWebviewUri(
         vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm', 'xterm.js'),
       ).toString(),

@@ -5,6 +5,8 @@
  */
 
 export interface PanelHtmlOptions {
+  /** webview CSP 源（vscode-webview://...），用于允许 xterm 资源与内联脚本 */
+  cspSource: string;
   /** xterm.js 的 webview 资源 URI */
   xtermJsUri: string;
   xtermCssUri: string;
@@ -16,6 +18,7 @@ export function renderPanelHtml(options: PanelHtmlOptions): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${options.cspSource} data:; style-src ${options.cspSource} 'unsafe-inline'; font-src ${options.cspSource}; script-src ${options.cspSource} 'unsafe-inline';">
 <link rel="stylesheet" href="${options.xtermCssUri}">
 <style>
   :root {
