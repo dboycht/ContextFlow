@@ -101,6 +101,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       xtermCssUri: webviewView.webview.asWebviewUri(
         vscode.Uri.joinPath(this.context.extensionUri, 'media', 'xterm', 'xterm.css'),
       ).toString(),
+      panelJsUri: webviewView.webview.asWebviewUri(
+        vscode.Uri.joinPath(this.context.extensionUri, 'media', 'panel.js'),
+      ).toString(),
     };
     webviewView.webview.html = renderPanelHtml(htmlOptions);
     webviewView.webview.onDidReceiveMessage((msg) => {
