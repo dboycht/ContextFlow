@@ -3,6 +3,10 @@ import * as path from 'node:path';
 import { CacheStore } from './cache/cacheStore';
 import { CacheMetrics } from './cache/metrics';
 import { PrefixCache } from './cache/prefixCache';
+import { AdapterRegistry } from './adapters/registry';
+import { DeepSeekAdapter } from './adapters/deepseek';
+import { DshJsonRpcTransport } from './adapters/dshTransport';
+import { ConfigStore } from './config/configStore';
 
 /**
  * core 装配层：把 VS Code 提供的资源（存储路径）注入纯 Node 的 core 模块。
@@ -12,6 +16,8 @@ export interface Core {
   cacheStore: CacheStore;
   metrics: CacheMetrics;
   prefixCache: PrefixCache;
+  config: ConfigStore;
+  registry: AdapterRegistry;
 }
 
 export function createCore(storagePath: string): Core {
@@ -26,5 +32,24 @@ export function createCore(storagePath: string): Core {
     metrics,
   });
 
-  return { cacheStore, metrics, prefixCache };
+  const config = new ConfigStore();
+  const registry = new AdapterRegistry();
+
+  // DeepSeekAdapter：驱动 DeepSeek Harness（SDK JSON-RPC，docs/02 §4.1）
+  const dsh = config.getDeepSeekConfig();
+  registry.register(
+    new DeepSeekAdapter(
+      new DshJsonRpcTransport({
+        command: dsh.command,
+        args: dsh.args,
+        cwd: dsh.cwd,
+        env: {
+          DEEPSEEK_API_KEY: process.env[dsh.apiKeyEnv] ?? '',
+        },
+      }),
+      dsh,
+    ),
+  );
+
+  return { cacheStore, metrics, prefixCache, config, registry };
 }
