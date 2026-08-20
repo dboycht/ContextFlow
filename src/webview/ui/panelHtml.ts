@@ -69,6 +69,25 @@ export function renderPanelHtml(): string {
   .composer button:disabled { opacity: .5; cursor: default; }
   .btn { background: transparent; color: var(--accent); border: 1px solid var(--accent);
          border-radius: 4px; padding: 1px 8px; cursor: pointer; font-size: 12px; }
+  /* 创建面板：选择 Harness 创建对话 */
+  .create-panel { border: 1px solid var(--border); border-radius: 8px; margin: 10px 12px 0;
+                  padding: 12px; background: var(--vscode-editor-background); }
+  .cp-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .cp-engines { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .cp-engine { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+               border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .cp-engine:hover { background: var(--vscode-list-hoverBackground); }
+  .cp-engine.active { border-color: var(--accent); background: var(--vscode-list-activeSelectionBackground);
+                      color: var(--vscode-list-activeSelectionForeground); }
+  .cp-engine input { accent-color: var(--accent); }
+  .cp-engine .cp-status { margin-left: auto; font-size: 11px; opacity: .7; }
+  .cp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .cp-row select { flex: 1; background: var(--vscode-dropdown-background);
+                   color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border);
+                   border-radius: 4px; padding: 4px 6px; }
+  .cp-create { background: var(--accent); color: var(--accent-fg); border: none;
+               border-radius: 4px; padding: 5px 16px; cursor: pointer; font-weight: 500; }
+  .cp-create:disabled { opacity: .5; cursor: default; }
   /* ③ 缓存状态条 */
   .statusbar { border-top: 1px solid var(--border); padding: 5px 12px; font-size: 11px;
                color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap;
@@ -91,13 +110,25 @@ export function renderPanelHtml(): string {
       <ul id="session-list"></ul>
     </aside>
     <section class="main">
+      <div id="create-panel" class="create-panel hidden">
+        <div class="cp-title">选择 Harness 创建对话</div>
+        <div id="cp-engines" class="cp-engines"></div>
+        <div class="cp-row">
+          <select id="cp-model" title="模型"></select>
+          <select id="cp-effort" title="推理强度"></select>
+        </div>
+        <div class="cp-row">
+          <button id="cp-create" class="cp-create">创建并对话</button>
+          <button id="cp-cancel" class="btn">取消</button>
+        </div>
+      </div>
       <div class="messages" id="messages">
-        <div class="empty">选择或新建一个会话，开始提问</div>
+        <div class="empty">点击「＋ 新建」选择 Harness 开始对话</div>
       </div>
       <div id="notice" class="notice hidden"></div>
       <div id="error" class="error hidden"></div>
       <div class="composer">
-        <select id="engine-select" title="Harness（新建会话时选定，之后绑定）"></select>
+        <select id="engine-select" title="当前会话绑定的 Harness"></select>
         <select id="model-select" title="模型"></select>
         <select id="effort-select" title="推理强度"></select>
         <textarea id="input" placeholder="输入问题，Enter 发送（Shift+Enter 换行）"></textarea>
@@ -115,6 +146,7 @@ export function renderPanelHtml(): string {
     currentModel: undefined, currentEffort: undefined,
     messages: [], metrics: null,
     busy: false, busyHint: '',
+    creating: false,
     streaming: null, // 流式气泡：{ wrap, thinking, tools, textEl }
   };
 
@@ -183,6 +215,73 @@ export function renderPanelHtml(): string {
     box.append(wrap);
     box.scrollTop = box.scrollHeight;
     state.streaming = { wrap, thinking, tools, textEl };
+  }
+
+  /** 创建面板：选择 Harness（引擎卡片）+ 模型 + 推理强度，创建并对话 */
+  function openCreatePanel() {
+    if (state.busy) return;
+    state.creating = true;
+    renderCreatePanel();
+    $('create-panel').classList.remove('hidden');
+  }
+
+  function closeCreatePanel() {
+    state.creating = false;
+    $('create-panel').classList.add('hidden');
+  }
+
+  function renderCreatePanel() {
+    const box = $('cp-engines');
+    box.innerHTML = state.engines.map((e) =>
+      '<label class="cp-engine' + (e.engineId === state.currentEngineId ? ' active' : '') +
+      '" data-id="' + escapeHtml(e.engineId) + '">' +
+      '<input type="radio" name="cp-engine" value="' + escapeHtml(e.engineId) + '"' +
+      (e.engineId === state.currentEngineId ? ' checked' : '') + '>' +
+      '<span>' + escapeHtml(e.label) + '</span>' +
+      '</label>'
+    ).join('') || '<div class="muted">未检测到可用引擎</div>';
+    renderCreateModelEffort();
+    $('cp-create').disabled = state.busy || state.engines.length === 0;
+  }
+
+  function renderCreateModelEffort() {
+    const engine = state.engines.find((e) => e.engineId === state.currentEngineId);
+    const models =
+      engine && Array.isArray(engine.models) && engine.models.length === 0
+        ? []
+        : engine?.models && engine.models.length > 0
+          ? engine.models
+          : ['default'];
+    const efforts =
+      engine && Array.isArray(engine.efforts) && engine.efforts.length === 0
+        ? []
+        : engine?.efforts && engine.efforts.length > 0
+          ? engine.efforts
+          : ['default'];
+    const mSel = $('cp-model');
+    mSel.innerHTML = models.map((m) =>
+      '<option value="' + escapeHtml(m) + '"' +
+      ((state.currentModel ?? 'default') === m ? ' selected' : '') + '>' +
+      escapeHtml(m) + '</option>'
+    ).join('');
+    mSel.disabled = state.busy || models.length === 0;
+    const eSel = $('cp-effort');
+    eSel.innerHTML = efforts.map((m) =>
+      '<option value="' + escapeHtml(m) + '"' +
+      ((state.currentEffort ?? 'default') === m ? ' selected' : '') + '>' +
+      escapeHtml(m) + '</option>'
+    ).join('');
+    eSel.disabled = state.busy || efforts.length === 0;
+  }
+
+  /** 引擎卡片点击：更新创建目标（并同步 composer 下拉） */
+  function pickCreateEngine(engineId) {
+    if (state.busy) return;
+    state.currentEngineId = engineId;
+    state.currentModel = undefined;
+    state.currentEffort = undefined;
+    renderCreatePanel();
+    renderEngines(); // 同步 composer
   }
 
   function scrollToBottom() {
@@ -314,8 +413,13 @@ export function renderPanelHtml(): string {
     switch (msg.type) {
       case 'sessions':
         state.sessions = msg.sessions;
-        state.currentSessionId = msg.currentSessionId ?? state.currentSessionId;
+        if ('currentSessionId' in msg) {
+          state.currentSessionId = msg.currentSessionId ?? undefined;
+        }
+        closeCreatePanel(); // 会话列表变化时关闭创建面板
         renderSessions();
+        renderEngines(); // 引擎绑定状态随当前会话更新
+        updateComposer();
         break;
       case 'engines': {
         const prevEngine = state.currentEngineId;
@@ -380,20 +484,47 @@ export function renderPanelHtml(): string {
   });
 
   // —— 交互 ——
-  $('new-session').addEventListener('click', () => {
-    // 用当前引擎下拉的选择创建会话（绑定该 Harness）
-    vscode.postMessage({ type: 'createSession', engineId: $('engine-select').value });
+  $('new-session').addEventListener('click', () => openCreatePanel());
+
+  $('cp-engines').addEventListener('change', (e) => {
+    const input = e.target.closest('input[type=radio]');
+    if (input) pickCreateEngine(input.value);
   });
+  $('cp-model').addEventListener('change', (e) => {
+    state.currentModel = e.target.value === 'default' ? undefined : e.target.value;
+  });
+  $('cp-effort').addEventListener('change', (e) => {
+    state.currentEffort = e.target.value === 'default' ? undefined : e.target.value;
+  });
+  $('cp-create').addEventListener('click', () => {
+    if (state.busy || state.engines.length === 0) return;
+    closeCreatePanel();
+    vscode.postMessage({ type: 'createSession', engineId: state.currentEngineId });
+  });
+  $('cp-cancel').addEventListener('click', () => closeCreatePanel());
 
   $('session-list').addEventListener('click', (e) => {
     const del = e.target.closest('[data-del]');
     if (del) {
       e.stopPropagation();
+      // 本地同步：删除当前会话则回到无会话状态（引擎解锁）
+      if (del.getAttribute('data-del') === state.currentSessionId) {
+        state.currentSessionId = undefined;
+        updateComposer();
+        renderEngines();
+      }
       vscode.postMessage({ type: 'deleteSession', sessionId: del.getAttribute('data-del') });
       return;
     }
     const li = e.target.closest('li[data-id]');
-    if (li) vscode.postMessage({ type: 'selectSession', sessionId: li.getAttribute('data-id') });
+    if (li) {
+      // 本地同步：立即切换当前会话（引擎绑定状态即时刷新）
+      state.currentSessionId = li.getAttribute('data-id');
+      renderSessions();
+      renderEngines();
+      updateComposer();
+      vscode.postMessage({ type: 'selectSession', sessionId: state.currentSessionId });
+    }
   });
 
   $('engine-select').addEventListener('change', (e) => {
