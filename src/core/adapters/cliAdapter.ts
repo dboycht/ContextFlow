@@ -76,8 +76,8 @@ export abstract class CliAdapterBase implements AgentAdapter {
     return this.resolvedCommand;
   }
 
-  /** 由子类构造完整 CLI 参数 */
-  protected abstract buildArgs(prompt: string, model?: string): string[];
+  /** 由子类构造完整 CLI 参数（prompt + 模型 + 推理强度） */
+  protected abstract buildArgs(prompt: string, model?: string, effort?: string): string[];
 
   /** 由子类解析厂商输出为归一化结果 */
   protected abstract parseOutput(stdout: string, stderr: string): CliParseResult;
@@ -88,6 +88,7 @@ export abstract class CliAdapterBase implements AgentAdapter {
       args: this.buildArgs(
         input.prompt,
         typeof input.options?.model === 'string' ? input.options.model : undefined,
+        typeof input.options?.effort === 'string' ? input.options.effort : undefined,
       ),
     });
     const usage: SendResult['usage'] = {

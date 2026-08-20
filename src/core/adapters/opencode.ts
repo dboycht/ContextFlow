@@ -17,16 +17,21 @@ export class OpencodeAdapter extends CliAdapterBase {
     maxContextTokens: 200_000,
     supportsCache: true,
     models: ['default'],
+    // 推理强度（--variant <provider-specific effort>，如 high/max/minimal；先仅 default）
+    efforts: ['default'],
     // 参考单价（元/百万 token，参考值；以实际 provider 定价为准，可配置覆写）
     pricing: { input: 2, cachedInput: 0.2, output: 8 },
   };
 
   protected readonly command = 'opencode';
 
-  protected buildArgs(prompt: string, model?: string): string[] {
+  protected buildArgs(prompt: string, model?: string, effort?: string): string[] {
     const args = ['run', prompt, '--format', 'json'];
     if (model && model !== 'default') {
       args.push('-m', model);
+    }
+    if (effort && effort !== 'default') {
+      args.push('--variant', effort);
     }
     return args;
   }

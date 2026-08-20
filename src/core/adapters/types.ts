@@ -48,6 +48,8 @@ export interface Capabilities {
   supportsCache: boolean;
   /** 可用模型列表（面板模型下拉数据源；'default' = 用引擎 CLI/配置的默认模型） */
   models?: string[];
+  /** 可用推理强度列表（面板推理强度下拉；'default' = 引擎默认；空数组 = 不支持置灰） */
+  efforts?: string[];
   /** 单价（元/百万 token，参考值，用于成本估算；以各厂商官方定价页为准，可配置覆写） */
   pricing?: {
     input: number;

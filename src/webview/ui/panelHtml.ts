@@ -97,8 +97,9 @@ export function renderPanelHtml(): string {
       <div id="notice" class="notice hidden"></div>
       <div id="error" class="error hidden"></div>
       <div class="composer">
-        <select id="engine-select" title="引擎"></select>
+        <select id="engine-select" title="Harness（新建会话时选定，之后绑定）"></select>
         <select id="model-select" title="模型"></select>
+        <select id="effort-select" title="推理强度"></select>
         <textarea id="input" placeholder="输入问题，Enter 发送（Shift+Enter 换行）"></textarea>
         <button id="send" disabled>发送</button>
       </div>
@@ -111,7 +112,7 @@ export function renderPanelHtml(): string {
   const state = {
     sessions: [], currentSessionId: undefined,
     engines: [], currentEngineId: undefined,
-    currentModel: undefined,
+    currentModel: undefined, currentEffort: undefined,
     messages: [], metrics: null,
     busy: false, busyHint: '',
     streaming: null, // 流式气泡：{ wrap, thinking, tools, textEl }
@@ -214,8 +215,14 @@ export function renderPanelHtml(): string {
       (e.engineId === state.currentEngineId ? ' selected' : '') + '>' +
       escapeHtml(e.label) + '</option>'
     ).join('');
-    sel.disabled = state.engines.length === 0;
+    // 会话存在时 Harness 已绑定（创建时选定，不可更改）；无会话时可选（决定新建用哪个）
+    const bound = !!state.currentSessionId;
+    sel.disabled = state.busy || state.engines.length === 0 || bound;
+    sel.title = bound
+      ? '当前会话已绑定该 Harness（创建时选定，不可更改）'
+      : '选择 Harness（新建会话时绑定）';
     renderModels();
+    renderEfforts();
   }
 
   /** 模型下拉：跟随当前引擎的 models（'default' = 用引擎 CLI/配置默认模型） */
@@ -238,6 +245,26 @@ export function renderPanelHtml(): string {
     const empty = models.length === 0;
     sel.disabled = state.busy || empty;
     sel.title = empty ? '当前引擎无可选模型' : '模型（default = 引擎默认）';
+  }
+
+  /** 推理强度下拉：跟随当前引擎的 efforts（'default' = 引擎默认；空列表 = 不支持置灰） */
+  function renderEfforts() {
+    const engine = state.engines.find((e) => e.engineId === state.currentEngineId);
+    const efforts =
+      engine && Array.isArray(engine.efforts) && engine.efforts.length === 0
+        ? []
+        : engine?.efforts && engine.efforts.length > 0
+          ? engine.efforts
+          : ['default'];
+    const sel = $('effort-select');
+    sel.innerHTML = efforts.map((m) =>
+      '<option value="' + escapeHtml(m) + '"' +
+      ((state.currentEffort ?? 'default') === m ? ' selected' : '') + '>' +
+      escapeHtml(m) + '</option>'
+    ).join('');
+    const empty = efforts.length === 0;
+    sel.disabled = state.busy || empty;
+    sel.title = empty ? '当前引擎不支持调节推理强度' : '推理强度（default = 引擎默认）';
   }
 
   function renderStatus() {
@@ -263,8 +290,10 @@ export function renderPanelHtml(): string {
   function updateComposer() {
     sendBtn.disabled = state.busy || input.value.trim().length === 0;
     input.disabled = state.busy;
-    $('engine-select').disabled = state.busy || state.engines.length === 0;
+    const bound = !!state.currentSessionId;
+    $('engine-select').disabled = state.busy || state.engines.length === 0 || bound;
     $('model-select').disabled = state.busy;
+    $('effort-select').disabled = state.busy;
   }
 
   function showNotice(text) {
@@ -288,12 +317,18 @@ export function renderPanelHtml(): string {
         state.currentSessionId = msg.currentSessionId ?? state.currentSessionId;
         renderSessions();
         break;
-      case 'engines':
+      case 'engines': {
+        const prevEngine = state.currentEngineId;
         state.engines = msg.engines;
         state.currentEngineId = msg.currentEngineId ?? state.currentEngineId;
+        if (prevEngine !== state.currentEngineId) {
+          state.currentModel = undefined;
+          state.currentEffort = undefined;
+        }
         renderEngines();
         updateComposer();
         break;
+      }
       case 'metrics':
         state.metrics = msg.metrics;
         renderStatus();
@@ -345,7 +380,10 @@ export function renderPanelHtml(): string {
   });
 
   // —— 交互 ——
-  $('new-session').addEventListener('click', () => vscode.postMessage({ type: 'createSession' }));
+  $('new-session').addEventListener('click', () => {
+    // 用当前引擎下拉的选择创建会话（绑定该 Harness）
+    vscode.postMessage({ type: 'createSession', engineId: $('engine-select').value });
+  });
 
   $('session-list').addEventListener('click', (e) => {
     const del = e.target.closest('[data-del]');
@@ -359,19 +397,21 @@ export function renderPanelHtml(): string {
   });
 
   $('engine-select').addEventListener('change', (e) => {
+    // 仅无会话时生效（决定新建会话绑定的 Harness）；有会话时下拉已禁用
     const engineId = e.target.value;
     state.currentEngineId = engineId;
-    state.currentModel = undefined; // 切换引擎后回到该引擎默认模型
+    state.currentModel = undefined;
+    state.currentEffort = undefined;
     renderModels();
-    if (state.currentSessionId) {
-      vscode.postMessage({ type: 'selectEngine', engineId, sessionId: state.currentSessionId });
-    } else {
-      showNotice('请先选择或新建会话');
-    }
+    renderEfforts();
   });
 
   $('model-select').addEventListener('change', (e) => {
     state.currentModel = e.target.value === 'default' ? undefined : e.target.value;
+  });
+
+  $('effort-select').addEventListener('change', (e) => {
+    state.currentEffort = e.target.value === 'default' ? undefined : e.target.value;
   });
 
   const input = $('input');
@@ -390,15 +430,16 @@ export function renderPanelHtml(): string {
     const text = input.value.trim();
     if (!text) return;
     const sessionId = state.currentSessionId;
-    const engineId = $('engine-select').value;
+    const engineId = state.currentSessionId ? undefined : $('engine-select').value;
     const model = state.currentModel;
+    const effort = state.currentEffort;
     // 本地乐观置忙：状态条立即显示处理中，等待后端 busy 确认
     state.busy = true;
     state.busyHint = '正在连接引擎并发送…';
     input.value = '';
     updateComposer();
     renderStatus();
-    vscode.postMessage({ type: 'send', sessionId, text, engineId, model });
+    vscode.postMessage({ type: 'send', sessionId, text, engineId, model, effort });
   }
 
   // 初始化

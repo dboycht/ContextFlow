@@ -20,16 +20,21 @@ export class ClaudeCodeAdapter extends CliAdapterBase {
     maxContextTokens: 200_000,
     supportsCache: true,
     models: ['default'],
+    // 推理强度（--effort <level>；合法枚举待按 Claude Code 文档校准，先仅 default）
+    efforts: ['default'],
     // 参考单价（元/百万 token，参考值；以 Anthropic 定价页为准，可配置覆写）
     pricing: { input: 3, cachedInput: 0.3, output: 15 },
   };
 
   protected readonly command = 'claude';
 
-  protected buildArgs(prompt: string, model?: string): string[] {
+  protected buildArgs(prompt: string, model?: string, effort?: string): string[] {
     const args = ['-p', prompt, '--output-format', 'json'];
     if (model && model !== 'default') {
       args.push('--model', model);
+    }
+    if (effort && effort !== 'default') {
+      args.push('--effort', effort);
     }
     return args;
   }
@@ -62,9 +67,13 @@ export class ClaudeCodeAdapter extends CliAdapterBase {
   /** 流式发送：逐行解析 stream-json 事件，实时转发思考/文本/工具流 */
   async sendStream(input: SendInput, handlers: StreamHandlers): Promise<SendResult> {
     const model = typeof input.options?.model === 'string' ? input.options.model : undefined;
+    const effort = typeof input.options?.effort === 'string' ? input.options.effort : undefined;
     const args = ['-p', input.prompt, '--output-format', 'stream-json', '--verbose'];
     if (model && model !== 'default') {
       args.push('--model', model);
+    }
+    if (effort && effort !== 'default') {
+      args.push('--effort', effort);
     }
 
     let finalContent = '';

@@ -17,16 +17,18 @@ export interface EngineSummary {
   label: string;
   /** 可用模型（面板模型下拉数据源） */
   models?: string[];
+  /** 可用推理强度（面板推理强度下拉数据源） */
+  efforts?: string[];
 }
 
 /** webview → extension（docs/04 第 4 节） */
 export type UiRequest =
   | { type: 'init' }
-  | { type: 'createSession'; title?: string }
+  | { type: 'createSession'; title?: string; engineId?: string }
   | { type: 'selectSession'; sessionId: string }
   | { type: 'deleteSession'; sessionId: string }
   | { type: 'selectEngine'; engineId: string; sessionId: string }
-  | { type: 'send'; sessionId?: string; text: string; engineId?: string; model?: string };
+  | { type: 'send'; sessionId?: string; text: string; engineId?: string; model?: string; effort?: string };
 
 /** extension → webview */
 export type UiState =
@@ -90,12 +92,18 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'createSession': {
-          const session = await orch.newSession();
+          // 创建时选定 Harness（绑定，后续不可更改）；模型/推理强度对话中可切
+          const session = await orch.newSession(msg.engineId);
           this.currentSessionId = session.id;
           this.post(view, {
             type: 'sessions',
             sessions: toSummaries(orch.listSessions()),
             currentSessionId: session.id,
+          });
+          this.post(view, {
+            type: 'engines',
+            engines: orch.engines(),
+            currentEngineId: session.engineId,
           });
           this.post(view, { type: 'messages', sessionId: session.id, messages: [] });
           break;
@@ -103,6 +111,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'selectSession': {
           this.currentSessionId = msg.sessionId;
           const session = orch.getSession(msg.sessionId);
+          this.post(view, {
+            type: 'sessions',
+            sessions: toSummaries(orch.listSessions()),
+            currentSessionId: msg.sessionId,
+          });
           this.post(view, {
             type: 'messages',
             sessionId: msg.sessionId,
@@ -168,6 +181,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
               },
               msg.engineId,
               msg.model,
+              msg.effort,
             );
             this.post(view, { type: 'message', message: outcome.userMessage });
             this.post(view, { type: 'message', message: outcome.assistantMessage });
