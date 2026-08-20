@@ -179,8 +179,17 @@
     $('terminal-header').classList.remove('hidden');
     $('terminal-header').textContent = '终端 · ' + command + '（Ctrl+C 退出 · /model 切模型）';
     $('terminal-container').classList.remove('hidden');
-    ensureTerminal().reset();
-    ensureTerminal().focus();
+    try {
+      const t = ensureTerminal();
+      t.reset();
+      t.write('\x1b[2J\x1b[H');
+      t.write('正在启动 ' + command + ' …（首次启动需几秒）\r\n');
+      t.focus();
+    } catch (err) {
+      const el = $('error');
+      el.textContent = '[终端初始化失败] ' + (err && err.message ? err.message : String(err));
+      el.classList.remove('hidden');
+    }
   }
   function showMessages() {
     state.terminalSessionId = undefined;
@@ -420,6 +429,8 @@
       showNotice('该 Harness 没有终端 CLI，暂不支持创建对话');
       return;
     }
+    // 立即反馈：正在创建终端会话（后端启动 PTY + 推 terminalStart）
+    showNotice('正在创建终端会话…');
     closeCreatePanel();
     vscode.postMessage({ type: 'createSession', engineId: state.currentEngineId });
   });

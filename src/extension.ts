@@ -14,11 +14,37 @@ export function activate(context: vscode.ExtensionContext): void {
   try {
     const fs = require('node:fs') as typeof import('node:fs');
     const path = require('node:path') as typeof import('node:path');
-    fs.writeFileSync(
-      path.join(context.globalStorageUri.fsPath, 'runtime.json'),
-      JSON.stringify(process.versions, null, 2),
-      'utf8',
-    );
+    const runtimeFile = path.join(context.globalStorageUri.fsPath, 'runtime.json');
+    fs.writeFileSync(runtimeFile, JSON.stringify(process.versions, null, 2), 'utf8');
+    // node-pty 自检：require + spawn cmd echo（判断扩展宿主能否加载 electron 版）
+    const append = (s: string) => fs.appendFileSync(runtimeFile, '\n' + s);
+    try {
+      const pty = require('node-pty') as {
+        spawn: (f: string, a: string[], o: unknown) => {
+          onData: (cb: (d: string) => void) => void;
+          onExit: (cb: (e: { exitCode: number }) => void) => void;
+          kill: () => void;
+        };
+      };
+      const p = pty.spawn('cmd.exe', ['/c', 'echo pty-ok'], { name: 'xterm-color', cols: 40, rows: 10 });
+      let got = '';
+      p.onData((d) => {
+        got += d;
+      });
+      p.onExit(() => {
+        append('node-pty: ' + (got.includes('pty-ok') ? 'OK' : 'NO_OUTPUT'));
+      });
+      setTimeout(() => {
+        append('node-pty: ' + (got.includes('pty-ok') ? 'OK' : 'TIMEOUT'));
+        try {
+          p.kill();
+        } catch {
+          /* ignore */
+        }
+      }, 4000);
+    } catch (err) {
+      append('node-pty: LOAD_FAIL ' + (err instanceof Error ? err.message : String(err)));
+    }
   } catch {
     /* 诊断文件写失败忽略 */
   }
