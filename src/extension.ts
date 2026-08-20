@@ -16,8 +16,15 @@ export function activate(context: vscode.ExtensionContext): void {
     const path = require('node:path') as typeof import('node:path');
     const runtimeFile = path.join(context.globalStorageUri.fsPath, 'runtime.json');
     fs.writeFileSync(runtimeFile, JSON.stringify(process.versions, null, 2), 'utf8');
-    // node-pty 自检：require + spawn cmd echo（判断扩展宿主能否加载 electron 版）
-    const append = (s: string) => fs.appendFileSync(runtimeFile, '\n' + s);
+    // 独立 try/catch 的诊断写入（append 失败不吞掉后续自检）
+    const log = (s: string): void => {
+      try {
+        fs.appendFileSync(runtimeFile, '\n' + s);
+      } catch {
+        /* 诊断写入失败忽略 */
+      }
+    };
+    // node-pty 自检：require + spawn cmd echo（判断扩展宿主能否加载）
     try {
       const pty = require('node-pty') as {
         spawn: (f: string, a: string[], o: unknown) => {
@@ -32,10 +39,10 @@ export function activate(context: vscode.ExtensionContext): void {
         got += d;
       });
       p.onExit(() => {
-        append('node-pty: ' + (got.includes('pty-ok') ? 'OK' : 'NO_OUTPUT'));
+        log('node-pty: ' + (got.includes('pty-ok') ? 'OK' : 'NO_OUTPUT'));
       });
       setTimeout(() => {
-        append('node-pty: ' + (got.includes('pty-ok') ? 'OK' : 'TIMEOUT'));
+        log('node-pty: ' + (got.includes('pty-ok') ? 'OK' : 'TIMEOUT'));
         try {
           p.kill();
         } catch {
@@ -43,7 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       }, 4000);
     } catch (err) {
-      append('node-pty: LOAD_FAIL ' + (err instanceof Error ? err.message : String(err)));
+      log('node-pty: LOAD_FAIL ' + (err instanceof Error ? err.message : String(err)));
     }
   } catch {
     /* 诊断文件写失败忽略 */

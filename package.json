@@ -34,7 +34,7 @@
         {
           "id": "contextflow",
           "title": "ContextFlow",
-          "icon": "media/icon.png"
+          "icon": "media/icon.svg"
         }
       ]
     },
@@ -44,7 +44,7 @@
           "type": "webview",
           "id": "contextflow.panel",
           "name": "ContextFlow",
-          "icon": "media/icon.png"
+          "icon": "media/icon.svg"
         }
       ]
     },

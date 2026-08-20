@@ -65,17 +65,31 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private currentSessionId: string | undefined;
   private currentView: vscode.WebviewView | undefined;
   private readonly ptyManager: PtyManager;
+  private readonly runtimeFile: string;
 
   constructor(
     private readonly orchestrator: Orchestrator,
     private readonly context: vscode.ExtensionContext,
   ) {
+    this.runtimeFile = require('node:path').join(
+      context.globalStorageUri.fsPath,
+      'runtime.json',
+    );
     this.ptyManager = new PtyManager({
       cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
       onData: (sessionId, data) => this.currentView && this.post(this.currentView, { type: 'ptyData', sessionId, data }),
       onExit: (sessionId, exitCode) =>
         this.currentView && this.post(this.currentView, { type: 'ptyExit', sessionId, exitCode }),
     });
+  }
+
+  /** 诊断写入 runtime.json（独立 try/catch，失败不影响主流程） */
+  private log(msg: string): void {
+    try {
+      require('node:fs').appendFileSync(this.runtimeFile, '\n[panel] ' + msg);
+    } catch {
+      /* 忽略 */
+    }
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -143,6 +157,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'createSession': {
           // 创建时选定 Harness（绑定，后续不可更改）；对话窗口 = 内置终端跑原生 CLI
           const termCommand = terminalCommandFor(msg.engineId ?? '');
+          this.log('createSession 请求 engineId=' + (msg.engineId ?? '') + ' termCommand=' + (termCommand ?? 'none'));
           if (!termCommand) {
             this.post(view, {
               type: 'error',
@@ -162,7 +177,13 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             engines: orch.enginesSync(),
             currentEngineId: session.engineId,
           });
-          this.ptyManager.spawn(session.id, termCommand, [], this.workspaceCwd());
+          try {
+            this.ptyManager.spawn(session.id, termCommand, [], this.workspaceCwd());
+            this.log('createSession: PTY spawn 成功 (session=' + session.id + ')');
+          } catch (err) {
+            this.log('createSession: PTY spawn 失败: ' + (err instanceof Error ? err.message : String(err)));
+            throw err;
+          }
           this.post(view, { type: 'terminalStart', sessionId: session.id, command: termCommand });
           break;
         }
@@ -267,9 +288,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         }
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log('handleMessage 错误: ' + message + ' (type=' + msg.type + ')');
       this.post(view, {
         type: 'error',
-        text: err instanceof Error ? err.message : String(err),
+        text: message,
       });
     }
   }
