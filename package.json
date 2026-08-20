@@ -82,6 +82,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "tsc -p ./ && node --test \"out/tests/*.test.js\"",
+    "sqlite:electron": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-sqlite.ps1 -Target electron",
+    "sqlite:node": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/switch-sqlite.ps1 -Target node",
     "package": "vsce package"
   },
   "dependencies": {

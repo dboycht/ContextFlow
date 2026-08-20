@@ -1,7 +1,10 @@
-import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import type BetterSqlite3 from 'better-sqlite3';
 import type { CacheEntry } from './types';
 import { computePrefixKey } from './cacheKey';
+
+/** better-sqlite3 构造函数类型（仅类型导入，不触发 native 加载） */
+type DatabaseConstructor = typeof import('better-sqlite3');
 
 /** SQLite 原始行（snake_case） */
 interface CacheRow {
@@ -36,9 +39,12 @@ function toEntry(row: CacheRow): CacheEntry {
  * （context.globalStorageUri 下），不感知 VS Code。
  */
 export class CacheStore {
-  private readonly db: Database.Database;
+  private readonly db: BetterSqlite3.Database;
 
   constructor(dbPath: string) {
+    // 惰性加载 native 模块：ABI 不匹配时扩展能在 import 阶段之后先打印诊断信息，
+    // 而不是在模块加载期直接崩溃（见 DEVELOPMENT.md 排坑记录）
+    const Database = require('better-sqlite3') as DatabaseConstructor;
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`

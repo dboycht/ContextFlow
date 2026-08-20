@@ -13,7 +13,17 @@ import { PanelProvider } from './webview/panel';
  * 会话 / 路由 / Adapter / 面板交互在 P1 里程碑接入（见 docs/）。
  */
 export function activate(context: vscode.ExtensionContext): void {
-  const core: Core = createCore(context.globalStorageUri.fsPath);
+  // 诊断：扩展宿主运行时版本（better-sqlite3 ABI 排查用，见 DEVELOPMENT.md 排坑记录）
+  console.log('[ContextFlow] runtime', JSON.stringify(process.versions));
+
+  let core: Core;
+  try {
+    core = createCore(context.globalStorageUri.fsPath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    void vscode.window.showErrorMessage(`ContextFlow 初始化失败: ${message}`);
+    return;
+  }
 
   // 侧边栏面板
   context.subscriptions.push(
