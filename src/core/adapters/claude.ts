@@ -1,12 +1,15 @@
-import type { Capabilities } from './types';
+import type { Capabilities, SendInput, SendResult, StreamHandlers } from './types';
 import type { CliParseResult } from './cliTransport';
 import { CliAdapterBase } from './cliAdapter';
 
 /**
- * Claude Code Adapter（P1 落地）：`claude -p <prompt> --output-format json`。
- * JSON 输出（2026-08-20 实测 claude 2.1.233）：
- *   { result, is_error, usage: { input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
- *                                output_tokens }, session_id, total_cost_usd, ... }
+ * Claude Code Adapter（P1 落地）：`claude -p <prompt>` headless。
+ *
+ * 非流式：`--output-format json`（JSON：result + usage，含 cache_read_input_tokens）。
+ * 流式：`--output-format stream-json --verbose`（逐行事件，2026-08-20 实测 claude 2.1.233）：
+ *   {"type":"assistant","message":{"content":[{"type":"thinking","thinking":"..."},
+ *     {"type":"text","text":"..."},{"type":"tool_use","name":...,"input":...}]}}   ← 对话/思考/工具流
+ *   {"type":"result","result":"...","usage":{"input_tokens","cache_read_input_tokens","output_tokens"}}
  * 缓存命中在 usage.cache_read_input_tokens（Anthropic Prompt Caching 读取）。
  * 模型：--model（用户 Claude Code 配置的默认模型也可直接使用；'default' = 用 CLI 默认）。
  */
@@ -54,5 +57,78 @@ export class ClaudeCodeAdapter extends CliAdapterBase {
       cacheHitTokens: usage.cache_read_input_tokens,
       raw: json,
     };
+  }
+
+  /** 流式发送：逐行解析 stream-json 事件，实时转发思考/文本/工具流 */
+  async sendStream(input: SendInput, handlers: StreamHandlers): Promise<SendResult> {
+    const model = typeof input.options?.model === 'string' ? input.options.model : undefined;
+    const args = ['-p', input.prompt, '--output-format', 'stream-json', '--verbose'];
+    if (model && model !== 'default') {
+      args.push('--model', model);
+    }
+
+    let finalContent = '';
+    let finalUsage: SendResult['usage'] = { inputTokens: 0, outputTokens: 0 };
+    let sawResult = false;
+    const events: unknown[] = [];
+
+    await this.transport.runStream({ command: this.getCommand(), args }, (line) => {
+      const event = JSON.parse(line) as {
+        type?: string;
+        is_error?: boolean;
+        error?: { message?: string };
+        result?: unknown;
+        usage?: {
+          input_tokens?: number;
+          cache_read_input_tokens?: number;
+          output_tokens?: number;
+        };
+        message?: {
+          content?: Array<{
+            type?: string;
+            thinking?: string;
+            text?: string;
+            name?: string;
+            input?: unknown;
+          }>;
+        };
+      };
+      events.push(event);
+
+      if (event.type === 'assistant') {
+        for (const block of event.message?.content ?? []) {
+          if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
+            handlers.onThinking?.(block.thinking);
+          } else if (block.type === 'text' && typeof block.text === 'string' && block.text) {
+            handlers.onText?.(block.text);
+          } else if (block.type === 'tool_use') {
+            handlers.onTool?.(`${block.name ?? 'tool'}: ${JSON.stringify(block.input ?? {})}`);
+          }
+        }
+      } else if (event.type === 'result') {
+        if (event.is_error) {
+          throw new Error(event.error?.message ?? JSON.stringify(event).slice(0, 300));
+        }
+        finalContent = typeof event.result === 'string' ? event.result : '';
+        const u = event.usage ?? {};
+        finalUsage = {
+          inputTokens: u.input_tokens ?? 0,
+          outputTokens: u.output_tokens ?? 0,
+          cacheHitTokens: u.cache_read_input_tokens,
+          costEstimate: this.estimateCost({
+            inputTokens: u.input_tokens ?? 0,
+            outputTokens: u.output_tokens ?? 0,
+            cacheHitTokens: u.cache_read_input_tokens,
+          }),
+        };
+        handlers.onUsage?.(finalUsage);
+        sawResult = true;
+      }
+    });
+
+    if (!sawResult) {
+      throw new Error('claude stream: no result event');
+    }
+    return { content: finalContent, raw: events, usage: finalUsage };
   }
 }

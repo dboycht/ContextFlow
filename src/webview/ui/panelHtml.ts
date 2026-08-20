@@ -49,6 +49,11 @@ export function renderPanelHtml(): string {
   .msg.assistant { align-self: flex-start; background: var(--vscode-editor-background);
                    border: 1px solid var(--border); }
   .msg .meta { display: block; font-size: 10px; opacity: .75; margin-top: 4px; }
+  .msg .thinking { font-size: 11px; color: var(--muted); border-left: 2px solid var(--border);
+                   padding-left: 8px; margin-bottom: 6px; white-space: pre-wrap; }
+  .msg .tools { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .msg .tools .tool-line { font-family: var(--vscode-editor-font-family, monospace); margin: 2px 0; }
+  .msg .stream-text { white-space: pre-wrap; }
   .empty { text-align: center; color: var(--muted); margin-top: 40px; }
   /* 输入区 */
   .composer { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; gap: 6px; }
@@ -109,6 +114,7 @@ export function renderPanelHtml(): string {
     currentModel: undefined,
     messages: [], metrics: null,
     busy: false, busyHint: '',
+    streaming: null, // 流式气泡：{ wrap, thinking, tools, textEl }
   };
 
   const $ = (id) => document.getElementById(id);
@@ -133,6 +139,7 @@ export function renderPanelHtml(): string {
   }
 
   function renderMessages() {
+    state.streaming = null; // 全量渲染时清掉流式状态
     const box = $('messages');
     if (state.messages.length === 0) {
       box.innerHTML = '<div class="empty">选择或新建一个会话，开始提问</div>';
@@ -144,6 +151,60 @@ export function renderPanelHtml(): string {
       return '<div class="msg ' + role + '">' + escapeHtml(m.content) + meta + '</div>';
     }).join('');
     box.scrollTop = box.scrollHeight;
+  }
+
+  /** 用 DOM 构造一条完整消息气泡（textContent，天然防 XSS） */
+  function makeMessageBubble(message) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + (message.role === 'user' ? 'user' : 'assistant');
+    div.textContent = message.content;
+    if (message.engineId) {
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = message.engineId;
+      div.append(meta);
+    }
+    return div;
+  }
+
+  /** 流式开始：创建 assistant 气泡（思考区/工具区默认折叠） */
+  function startStreaming() {
+    const box = $('messages');
+    const wrap = document.createElement('div');
+    wrap.className = 'msg assistant streaming';
+    const thinking = document.createElement('div');
+    thinking.className = 'thinking hidden';
+    const tools = document.createElement('div');
+    tools.className = 'tools hidden';
+    const textEl = document.createElement('div');
+    textEl.className = 'stream-text';
+    wrap.append(thinking, tools, textEl);
+    box.append(wrap);
+    box.scrollTop = box.scrollHeight;
+    state.streaming = { wrap, thinking, tools, textEl };
+  }
+
+  function scrollToBottom() {
+    $('messages').scrollTop = $('messages').scrollHeight;
+  }
+
+  /** 消息到达：流式期间 user 插到气泡前、assistant 结束后替换为完整消息 */
+  function handleMessage(message) {
+    if (state.streaming && message.role === 'user') {
+      state.messages = state.messages.concat([message]);
+      $('messages').insertBefore(makeMessageBubble(message), state.streaming.wrap);
+      scrollToBottom();
+      return;
+    }
+    if (state.streaming && message.role === 'assistant') {
+      state.streaming.wrap.remove();
+      state.streaming = null;
+      state.messages = state.messages.concat([message]);
+      renderMessages();
+      return;
+    }
+    state.messages = state.messages.concat([message]);
+    renderMessages();
   }
 
   function renderEngines() {
@@ -160,14 +221,23 @@ export function renderPanelHtml(): string {
   /** 模型下拉：跟随当前引擎的 models（'default' = 用引擎 CLI/配置默认模型） */
   function renderModels() {
     const engine = state.engines.find((e) => e.engineId === state.currentEngineId);
-    const models = engine?.models && engine.models.length > 0 ? engine.models : ['default'];
+    // 明确声明空数组 = 该引擎无可选模型 → 置灰；未声明 → 默认 'default'
+    const models =
+      engine && Array.isArray(engine.models) && engine.models.length === 0
+        ? []
+        : engine?.models && engine.models.length > 0
+          ? engine.models
+          : ['default'];
     const sel = $('model-select');
     sel.innerHTML = models.map((m) =>
       '<option value="' + escapeHtml(m) + '"' +
       ((state.currentModel ?? 'default') === m ? ' selected' : '') + '>' +
       escapeHtml(m) + '</option>'
     ).join('');
-    sel.disabled = state.busy || models.length === 0;
+    // 无可用模型 → 置灰不可点
+    const empty = models.length === 0;
+    sel.disabled = state.busy || empty;
+    sel.title = empty ? '当前引擎无可选模型' : '模型（default = 引擎默认）';
   }
 
   function renderStatus() {
@@ -233,8 +303,35 @@ export function renderPanelHtml(): string {
         renderMessages();
         break;
       case 'message':
-        state.messages = state.messages.concat([msg.message]);
-        renderMessages();
+        handleMessage(msg.message);
+        break;
+      case 'streamStart':
+        startStreaming();
+        break;
+      case 'streamText':
+        if (state.streaming) {
+          state.streaming.textEl.textContent += msg.delta;
+          scrollToBottom();
+        }
+        break;
+      case 'streamThinking':
+        if (state.streaming) {
+          const t = state.streaming.thinking;
+          t.classList.remove('hidden');
+          t.textContent += msg.delta;
+          scrollToBottom();
+        }
+        break;
+      case 'streamTool':
+        if (state.streaming) {
+          const tl = state.streaming.tools;
+          tl.classList.remove('hidden');
+          const line = document.createElement('div');
+          line.className = 'tool-line';
+          line.textContent = msg.label;
+          tl.append(line);
+          scrollToBottom();
+        }
         break;
       case 'busy':
         state.busy = msg.busy;

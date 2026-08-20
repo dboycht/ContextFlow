@@ -35,6 +35,10 @@ export type UiState =
   | { type: 'metrics'; metrics: CacheMetricsSnapshot }
   | { type: 'messages'; sessionId: string; messages: Message[] }
   | { type: 'message'; message: Message }
+  | { type: 'streamStart' }
+  | { type: 'streamText'; delta: string }
+  | { type: 'streamThinking'; delta: string }
+  | { type: 'streamTool'; label: string }
   | { type: 'busy'; busy: boolean; hint?: string }
   | { type: 'notice'; text: string }
   | { type: 'error'; text: string };
@@ -137,7 +141,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           break;
         }
         case 'send': {
-          // 发送进度提示（首次会连接/启动 Harness 进程，可能数秒~数十秒）
+          // 发送进度提示（首次会启动 Harness/CLI 进程，可能数秒~数十秒）
           this.post(view, { type: 'busy', busy: true, hint: '正在连接引擎并发送…' });
           try {
             let sessionId = msg.sessionId;
@@ -152,7 +156,19 @@ export class PanelProvider implements vscode.WebviewViewProvider {
                 currentSessionId: session.id,
               });
             }
-            const outcome = await orch.send(sessionId, msg.text, msg.engineId, msg.model);
+            // 流式：先建流式气泡，增量实时推送；完成后推完整消息替换
+            this.post(view, { type: 'streamStart' });
+            const outcome = await orch.sendStream(
+              sessionId,
+              msg.text,
+              {
+                onText: (delta) => this.post(view, { type: 'streamText', delta }),
+                onThinking: (delta) => this.post(view, { type: 'streamThinking', delta }),
+                onTool: (label) => this.post(view, { type: 'streamTool', label }),
+              },
+              msg.engineId,
+              msg.model,
+            );
             this.post(view, { type: 'message', message: outcome.userMessage });
             this.post(view, { type: 'message', message: outcome.assistantMessage });
             this.post(view, { type: 'metrics', metrics: orch.metricsSnapshot() });

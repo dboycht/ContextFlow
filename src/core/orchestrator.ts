@@ -7,6 +7,7 @@ import type { CacheStore } from './cache/cacheStore';
 import type { CacheMetrics } from './cache/metrics';
 import type { AdapterRegistry } from './adapters/registry';
 import type { ContextRef } from './cache/types';
+import type { SendResult, StreamHandlers } from './adapters/types';
 
 /**
  * 关键闭环编排器（docs/03 §6）：
@@ -48,7 +49,7 @@ export class Orchestrator {
   }
 
   /**
-   * 一轮完整提问（docs/03 §6 关键闭环）。
+   * 一轮完整提问（docs/03 §6 关键闭环；非流式入口，等价于 sendStream 无 handlers）。
    * @param sessionId 会话 id
    * @param text      当前问题（可变部分，不进前缀）
    * @param requestedEngineId 面板手动选择（undefined = 走亲和性/默认）
@@ -57,6 +58,20 @@ export class Orchestrator {
   async send(
     sessionId: string,
     text: string,
+    requestedEngineId?: string,
+    requestedModel?: string,
+  ): Promise<SendOutcome> {
+    return this.sendStream(sessionId, text, {}, requestedEngineId, requestedModel);
+  }
+
+  /**
+   * 流式一轮完整提问：支持流式的引擎实时转发对话/思考/工具流（handlers），
+   * 不支持流式的引擎回退 send（一次性输出，面板随后推完整消息）。
+   */
+  async sendStream(
+    sessionId: string,
+    text: string,
+    handlers: StreamHandlers,
     requestedEngineId?: string,
     requestedModel?: string,
   ): Promise<SendOutcome> {
@@ -84,7 +99,7 @@ export class Orchestrator {
       decision.engineId,
     );
 
-    // 4. 发送到目标引擎
+    // 4. 发送到目标引擎（流式优先，非流式回退）
     const adapter = registry.get(decision.engineId);
     if (!adapter) {
       throw new Error(`adapter not found: ${decision.engineId}`);
@@ -92,12 +107,14 @@ export class Orchestrator {
     const prompt = contextRef.prefixText
       ? `${contextRef.prefixText}\n\n${contextRef.newText}`
       : contextRef.newText;
-    const result = await adapter.send({
-      prompt,
-      contextRef,
-      sessionId,
-      options: requestedModel && requestedModel !== 'default' ? { model: requestedModel } : undefined,
-    });
+    const options =
+      requestedModel && requestedModel !== 'default' ? { model: requestedModel } : undefined;
+    let result: SendResult;
+    if (adapter.sendStream) {
+      result = await adapter.sendStream({ prompt, contextRef, sessionId, options }, handlers);
+    } else {
+      result = await adapter.send({ prompt, contextRef, sessionId, options });
+    }
 
     // 5. cacheId 回填（显式缓存厂商如 Anthropic；DeepSeek 自动缓存无 cache_id）
     if (result.cacheId && contextRef.cacheEntry) {

@@ -88,6 +88,17 @@ test('CliTransport：checkExecutable 只看退出码', async () => {
   assert.equal(await p2, false);
 });
 
+test('CliTransport：runStream 逐行回调事件流，exit 0 完成', async () => {
+  const { child, spawnFn } = mockSpawn();
+  const t = new CliTransport({ spawnFn, parse: () => ({ content: '', inputTokens: 0, outputTokens: 0 }) });
+  const lines: string[] = [];
+  const p = t.runStream({ command: 'claude', args: ['-p', 'hi', '--output-format', 'stream-json'] }, (line) => lines.push(line));
+  child.stdout.write('{"type":"a"}\n{"type":"b"}\n');
+  child.emit('exit', 0);
+  await p;
+  assert.deepEqual(lines, ['{"type":"a"}', '{"type":"b"}']);
+});
+
 // ---------- ClaudeCodeAdapter ----------
 
 test('Claude：buildArgs 含 -p/--output-format json，模型参数可选', async () => {
@@ -122,6 +133,49 @@ test('Claude：is_error → reject', async () => {
   child.stdout.write(`${JSON.stringify({ is_error: true, error: { message: 'auth failed' } })}\n`);
   child.emit('exit', 0);
   await assert.rejects(p, /auth failed/);
+});
+
+test('Claude：sendStream 流式转发思考/文本/工具流 + result usage', async () => {
+  const { calls, child, spawnFn } = mockSpawn();
+  const adapter = new ClaudeCodeAdapter({ spawnFn });
+  const texts: string[] = [];
+  const thinkings: string[] = [];
+  const tools: string[] = [];
+  const p = adapter.sendStream(
+    { prompt: '你好', contextRef: CONTEXT_REF, sessionId: 's1' },
+    {
+      onText: (d) => texts.push(d),
+      onThinking: (d) => thinkings.push(d),
+      onTool: (l) => tools.push(l),
+    },
+  );
+  child.stdout.write(
+    `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: '思考中…' }] } })}\n` +
+    `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '收到' }, { type: 'tool_use', name: 'Read', input: { file: 'a.txt' } }] } })}\n` +
+    `${JSON.stringify({ type: 'result', result: '收到', usage: { input_tokens: 100, cache_read_input_tokens: 60, output_tokens: 20 } })}\n`,
+  );
+  child.emit('exit', 0);
+  const result = await p;
+  assert.deepEqual(thinkings, ['思考中…']);
+  assert.deepEqual(texts, ['收到']);
+  assert.equal(tools.length, 1);
+  assert.ok(tools[0]!.includes('Read'));
+  assert.equal(result.content, '收到');
+  assert.equal(result.usage.inputTokens, 100);
+  assert.equal(result.usage.cacheHitTokens, 60);
+  // 流式参数：stream-json + verbose
+  assert.ok(calls[0]!.args.includes('--output-format'));
+  assert.ok(calls[0]!.args.includes('stream-json'));
+  assert.ok(calls[0]!.args.includes('--verbose'));
+});
+
+test('Claude：sendStream 无 result 事件 → reject', async () => {
+  const { child, spawnFn } = mockSpawn();
+  const adapter = new ClaudeCodeAdapter({ spawnFn });
+  const p = adapter.sendStream({ prompt: 'hi', contextRef: CONTEXT_REF, sessionId: 's1' }, {});
+  child.stdout.write(`${JSON.stringify({ type: 'assistant', message: { content: [] } })}\n`);
+  child.emit('exit', 0);
+  await assert.rejects(p, /no result event/);
 });
 
 // ---------- OpencodeAdapter ----------

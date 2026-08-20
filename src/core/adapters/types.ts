@@ -56,10 +56,28 @@ export interface Capabilities {
   };
 }
 
+/** 流式事件处理器（面板实时渲染：对话流/思考流/工具流） */
+export interface StreamHandlers {
+  /** 对话文本增量 */
+  onText?(delta: string): void;
+  /** 思考文本增量 */
+  onThinking?(delta: string): void;
+  /** 工具调用（label 展示用） */
+  onTool?(label: string): void;
+  /** 中途用量（如厂商在流中回传 usage） */
+  onUsage?(usage: SendResult['usage']): void;
+}
+
 /** 统一 Adapter 接口：只管「发一次请求、拿回一次真实引擎结果」 */
 export interface AgentAdapter {
   readonly capabilities: Capabilities;
   send(input: SendInput): Promise<SendResult>;
+  /**
+   * 可选：流式发送（支持则面板实时渲染对话/思考/工具流）。
+   * 返回最终 SendResult；期间经 handlers 实时推送增量。
+   * 不支持流式的引擎省略本方法，编排层回退 send（一次性输出）。
+   */
+  sendStream?(input: SendInput, handlers: StreamHandlers): Promise<SendResult>;
   healthCheck(): Promise<boolean>;
   estimateCost(usage: SendResult['usage']): number;
 }

@@ -99,6 +99,66 @@ export class CliTransport {
   }
 
   /**
+   * 流式运行：spawn 后**逐行**回调（厂商 NDJSON/JSONL 事件流），边读边推。
+   * 非 0 退出/超时 → reject；正常结束（exit 0）→ resolve。
+   * @param onLine 每收到一行完整 JSON 事件时调用（adapter 负责解析与转发）
+   */
+  runStream(
+    spec: CliLaunchSpec,
+    onLine: (line: string) => void,
+  ): Promise<void> {
+    const timeoutMs = spec.timeoutMs ?? 180_000;
+    return new Promise((resolve, reject) => {
+      const child = this.spawnFn(spec.command, spec.args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, ...spec.env },
+        cwd: spec.cwd,
+        windowsHide: true,
+      });
+      let stderr = '';
+      let buffer = '';
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        buffer += chunk.toString('utf8');
+        let newlineIndex: number;
+        while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (line) {
+            try {
+              onLine(line);
+            } catch (err) {
+              child.kill('SIGKILL');
+              reject(err instanceof Error ? err : new Error(String(err)));
+              return;
+            }
+          }
+        }
+      });
+      child.stderr.on('data', (chunk: Buffer | string) => {
+        stderr += chunk.toString('utf8');
+        this.stderrSink?.(chunk.toString('utf8'));
+      });
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error(`cli timeout after ${timeoutMs}ms: ${spec.command} ${spec.args.join(' ')}`));
+      }, timeoutMs);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) {
+          const tail = stderr.trim().slice(-400);
+          reject(new Error(`cli exited ${code ?? 'unknown'}: ${tail}`));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
    * 健康检查：spawn `command --version`，只看退出码（不 parse 输出）。
    * 用于 CLI 类引擎的故障转移判断。
    */
