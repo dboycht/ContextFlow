@@ -14,6 +14,9 @@ import { ConfigStore } from './config/configStore';
 /**
  * core 装配层：把 VS Code 提供的资源（存储路径）注入纯 Node 的 core 模块。
  * 只有 extension.ts / webview 允许 import vscode；本文件保持纯 Node。
+ *
+ * @param storagePath 扩展全局存储目录（SQLite 落盘）
+ * @param configDirs  额外配置搜索目录（如工作区文件夹；扩展宿主 cwd 不可靠，不能只依赖 cwd）
  */
 export interface Core {
   cacheStore: CacheStore;
@@ -40,7 +43,7 @@ function readApiKeyFromEnvFile(envFile: string | undefined): string | undefined 
   return undefined;
 }
 
-export function createCore(storagePath: string): Core {
+export function createCore(storagePath: string, configDirs: string[] = []): Core {
   fs.mkdirSync(storagePath, { recursive: true });
   const dbPath = path.join(storagePath, 'contextflow.db');
 
@@ -54,8 +57,16 @@ export function createCore(storagePath: string): Core {
   });
 
   const config = new ConfigStore();
-  // 本机运行时配置覆盖（data/config.json，gitignore 不随源码分发；产品未来走设置 UI）
-  config.loadFromFile(path.join(process.cwd(), 'data', 'config.json'));
+  // 本机运行时配置覆盖（data/config.json，gitignore 不随源码分发；产品未来走设置 UI）。
+  // 候选路径：环境变量 DSH_CONFIG > 当前目录 > 传入的配置目录（如工作区文件夹）。
+  const configCandidates = [
+    process.env['DSH_CONFIG'],
+    path.join(process.cwd(), 'data', 'config.json'),
+    ...configDirs.map((dir) => path.join(dir, 'data', 'config.json')),
+  ].filter((p): p is string => Boolean(p));
+  for (const candidate of configCandidates) {
+    config.loadFromFile(candidate);
+  }
   const registry = new AdapterRegistry();
 
   // DeepSeekAdapter：驱动 DeepSeek Harness（SDK JSON-RPC，docs/02 §4.1）
@@ -64,14 +75,25 @@ export function createCore(storagePath: string): Core {
     readApiKeyFromEnvFile(dsh.envFile) ?? process.env[dsh.apiKeyEnv] ?? '';
   registry.register(
     new DeepSeekAdapter(
-      new DshJsonRpcTransport({
-        command: dsh.command,
-        args: dsh.args,
-        cwd: dsh.cwd,
-        env: {
-          DEEPSEEK_API_KEY: apiKey,
+      new DshJsonRpcTransport(
+        {
+          command: dsh.command,
+          args: dsh.args,
+          cwd: dsh.cwd,
+          env: {
+            DEEPSEEK_API_KEY: apiKey,
+          },
         },
-      }),
+        {
+          // dsh 启动诊断打到扩展宿主控制台（stdout 只走协议帧，诊断在 stderr）
+          stderrSink: (chunk) => {
+            const line = chunk.trim();
+            if (line) {
+              console.error('[ContextFlow][dsh]', line.slice(0, 500));
+            }
+          },
+        },
+      ),
       dsh,
     ),
   );

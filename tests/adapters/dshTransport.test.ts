@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import {
   JsonRpcLineTransport,
   JsonRpcResponseError,
@@ -23,23 +24,21 @@ async function until(cond: () => boolean, timeoutMs = 1000): Promise<void> {
   }
 }
 
-/** 假子进程：用 PassThrough 模拟 stdio */
+/** 假子进程：EventEmitter + PassThrough stdio，可模拟 exit/error */
 function fakeChild() {
+  const ee = new EventEmitter();
   const stdout = new PassThrough();
   const stdin = new PassThrough();
   const stderr = new PassThrough();
-  const child = {
+  const child = Object.assign(ee, {
     stdout,
     stdin,
     stderr,
     exitCode: null as number | null,
-    once(_event: string, _cb: () => void) {
-      /* 不触发，close 走 kill 超时路径 */
-    },
     kill(): void {
       child.exitCode = 0;
     },
-  };
+  });
   return child;
 }
 
@@ -131,6 +130,27 @@ test('帧层：close 后 pending 拒绝、新请求拒绝', async () => {
   t.close();
   await assert.rejects(p, /closed/);
   await assert.rejects(t.request('shutdown'), /closed/);
+});
+
+test('帧层：input 流 EOF（对端退出）→ pending 拒绝，不挂起', async () => {
+  const serverToClient = new PassThrough();
+  const clientToServer = new PassThrough();
+  const t = new JsonRpcLineTransport(serverToClient, clientToServer);
+  const p = t.request('initialize', {});
+  serverToClient.end(); // 模拟对端进程退出（stdout 关闭）
+  await assert.rejects(p, /closed/);
+});
+
+test('Dsh 驱动：子进程启动失败（exit）→ start 拒绝，不永久挂起', async () => {
+  const child = fakeChild();
+  const t = new DshJsonRpcTransport(
+    { command: 'node', args: ['nope.js'] },
+    { spawnFn: (() => child) as never, idleTimeoutMs: 500, exitTimeoutMs: 50 },
+  );
+  const startP = t.start();
+  await waitTick();
+  child.emit('exit', 1); // 进程立即退出（如命令不存在）
+  await assert.rejects(startP, /closed/);
 });
 
 // ---------- DshJsonRpcTransport：业务层（mock spawn） ----------

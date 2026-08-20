@@ -13,7 +13,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let core: Core;
   try {
-    core = createCore(context.globalStorageUri.fsPath);
+    // 扩展宿主 cwd 是 VS Code 启动目录，不等于工作区；把工作区文件夹作为配置搜索目录传入
+    const workspaceDirs = (vscode.workspace.workspaceFolders ?? []).map(
+      (f) => f.uri.fsPath,
+    );
+    core = createCore(context.globalStorageUri.fsPath, workspaceDirs);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     void vscode.window.showErrorMessage(`ContextFlow 初始化失败: ${message}`);

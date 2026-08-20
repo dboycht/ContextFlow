@@ -75,6 +75,10 @@ export class JsonRpcLineTransport {
     private readonly options: JsonRpcLineTransportOptions = {},
   ) {
     input.on('data', (chunk: Buffer | string) => this.handleChunk(chunk));
+    // 流关闭/EOF：对端进程退出时拒绝所有 pending，避免请求永久挂起
+    input.on('end', () => this.close());
+    input.on('close', () => this.close());
+    input.on('error', () => this.close());
   }
 
   /** 发请求并等待响应 */
@@ -308,6 +312,13 @@ export class DshJsonRpcTransport implements DshTransport {
         this.stderrSink?.(chunk.toString('utf8')),
       );
     }
+    // 子进程 spawn 失败或提前退出：关闭传输 → 拒绝 pending 请求，避免调用方永久挂起
+    child.on('error', () => {
+      this.rpc?.close();
+    });
+    child.on('exit', () => {
+      this.rpc?.close();
+    });
     const rpc = new JsonRpcLineTransport(child.stdout, child.stdin, {
       onNotification: (n) => this.notificationHandler?.(n),
     });
